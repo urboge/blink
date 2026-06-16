@@ -1,0 +1,80 @@
+{
+  "categories": [
+    {
+      "id": "greetings",
+      "name": "Greetings",
+      "stickers": [
+        { "id": "g1", "name": "Hello", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f44b/512.webp" },
+        { "id": "g2", "name": "Hi There", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f600/512.webp" },
+        { "id": "g3", "name": "Good Morning", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2600_fe0f/512.webp" },
+        { "id": "g4", "name": "Good Night", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f319/512.webp" },
+        { "id": "g5", "name": "Welcome", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f917/512.webp" },
+        { "id": "g6", "name": "Bye", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f44c/512.webp" },
+        { "id": "g7", "name": "Peace", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/270c_fe0f/512.webp" },
+        { "id": "g8", "name": "Namaste", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f64f/512.webp" }
+      ]
+    },
+    {
+      "id": "moods",
+      "name": "Moods",
+      "stickers": [
+        { "id": "m1", "name": "Happy", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f604/512.webp" },
+        { "id": "m2", "name": "Sad", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f622/512.webp" },
+        { "id": "m3", "name": "Angry", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f621/512.webp" },
+        { "id": "m4", "name": "Surprised", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f632/512.webp" },
+        { "id": "m5", "name": "Cool", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f60e/512.webp" },
+        { "id": "m6", "name": "In Love", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f970/512.webp" },
+        { "id": "m7", "name": "Thinking", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f914/512.webp" },
+        { "id": "m8", "name": "Sleepy", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f634/512.webp" },
+        { "id": "m9", "name": "Crying Laugh", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f923/512.webp" },
+        { "id": "m10", "name": "Mind Blown", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f92f/512.webp" }
+      ]
+    },
+    {
+      "id": "animals",
+      "name": "Animals",
+      "stickers": [
+        { "id": "a1", "name": "Dog", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f436/512.webp" },
+        { "id": "a2", "name": "Cat", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f431/512.webp" },
+        { "id": "a3", "name": "Bear", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f43b/512.webp" },
+        { "id": "a4", "name": "Bunny", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f430/512.webp" },
+        { "id": "a5", "name": "Fox", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f98a/512.webp" },
+        { "id": "a6", "name": "Penguin", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f427/512.webp" },
+        { "id": "a7", "name": "Frog", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f438/512.webp" },
+        { "id": "a8", "name": "Panda", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f43c/512.webp" },
+        { "id": "a9", "name": "Unicorn", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f984/512.webp" },
+        { "id": "a10", "name": "Dragon", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f432/512.webp" }
+      ]
+    },
+    {
+      "id": "vibes",
+      "name": "Vibes",
+      "stickers": [
+        { "id": "v1", "name": "Fire", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f525/512.webp" },
+        { "id": "v2", "name": "Party", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f389/512.webp" },
+        { "id": "v3", "name": "100", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f4af/512.webp" },
+        { "id": "v4", "name": "Trophy", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f3c6/512.webp" },
+        { "id": "v5", "name": "Rocket", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f680/512.webp" },
+        { "id": "v6", "name": "Diamond", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f48e/512.webp" },
+        { "id": "v7", "name": "Lightning", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/26a1/512.webp" },
+        { "id": "v8", "name": "Crown", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f451/512.webp" },
+        { "id": "v9", "name": "Clown", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f921/512.webp" },
+        { "id": "v10", "name": "Ghost", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f47b/512.webp" }
+      ]
+    },
+    {
+      "id": "food",
+      "name": "Food",
+      "stickers": [
+        { "id": "f1", "name": "Pizza", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f355/512.webp" },
+        { "id": "f2", "name": "Burger", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f354/512.webp" },
+        { "id": "f3", "name": "Sushi", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f363/512.webp" },
+        { "id": "f4", "name": "Cake", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f370/512.webp" },
+        { "id": "f5", "name": "Coffee", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2615/512.webp" },
+        { "id": "f6", "name": "Boba", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f9cb/512.webp" },
+        { "id": "f7", "name": "Tacos", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f32e/512.webp" },
+        { "id": "f8", "name": "Ramen", "url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f35c/512.webp" }
+      ]
+    }
+  ]
+}
