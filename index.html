@@ -155,6 +155,129 @@
                 class="text-gray-400 hover:underline">urboge</a>.</p>
     </footer>
 
+    <script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+
+  // If the user previously accepted, grant consent immediately so GA loads right away
+  if (localStorage.getItem('cookieConsent') === 'granted') {
+    gtag('consent', 'default', {
+      'analytics_storage': 'granted',
+      'ad_storage': 'granted',
+      'ad_user_data': 'granted',
+      'ad_personalization': 'granted'
+    });
+  } else {
+    // Otherwise, deny everything by default
+    gtag('consent', 'default', {
+      'analytics_storage': 'denied',
+      'ad_storage': 'denied',
+      'ad_user_data': 'denied',
+      'ad_personalization': 'denied'
+    });
+  }
+</script>
+
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXXXXXXX');
+</script>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    // Check if user has already made a choice
+    if (!localStorage.getItem('cookieConsent')) {
+      createConsentBanner();
+    }
+  });
+
+  function createConsentBanner() {
+    // Create container
+    const banner = document.createElement('div');
+    banner.id = 'custom-cookie-banner';
+    
+    // Inject CSS styles directly via JS
+    banner.style.position = 'fixed';
+    banner.style.bottom = '20px';
+    banner.style.left = '50%';
+    banner.style.transform = 'translateX(-50%)';
+    banner.style.width = '90%';
+    banner.style.maxWidth = '600px';
+    banner.style.backgroundColor = '#1a1a1a';
+    banner.style.color = '#ffffff';
+    banner.style.padding = '20px';
+    banner.style.borderRadius = '8px';
+    banner.style.boxShadow = '0px 4px 15px rgba(0,0,0,0.3)';
+    banner.style.fontFamily = 'sans-serif';
+    banner.style.zIndex = '999999';
+    banner.style.display = 'flex';
+    banner.style.flexDirection = 'column';
+    banner.style.gap = '15px';
+
+    // Banner Text
+    const text = document.createElement('p');
+    text.style.margin = '0';
+    text.style.fontSize = '14px';
+    text.style.lineHeight = '1.5';
+    text.innerHTML = 'We use cookies to analyze our website traffic via Google Analytics. You can choose to accept or reject this tracking.';
+    banner.appendChild(text);
+
+    // Button Container (Symmetrical layout)
+    const buttonContainer = document.createElement('div');
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.gap = '10px';
+    buttonContainer.style.justifyContent = 'flex-end';
+
+    // Reject Button
+    const rejectBtn = document.createElement('button');
+    rejectBtn.innerText = 'Reject All';
+    setButtonStyle(rejectBtn, '#444444');
+    rejectBtn.onclick = function() {
+      localStorage.setItem('cookieConsent', 'denied');
+      banner.remove();
+    };
+
+    // Accept Button
+    const acceptBtn = document.createElement('button');
+    acceptBtn.innerText = 'Accept All';
+    setButtonStyle(acceptBtn, '#007bff'); // Primary blue color
+    acceptBtn.onclick = function() {
+      localStorage.setItem('cookieConsent', 'granted');
+      
+      // Update Google Consent Mode dynamically
+      gtag('consent', 'update', {
+        'analytics_storage': 'granted',
+        'ad_storage': 'granted',
+        'ad_user_data': 'granted',
+        'ad_personalization': 'granted'
+      });
+      
+      banner.remove();
+    };
+
+    // Append everything
+    buttonContainer.appendChild(rejectBtn);
+    buttonContainer.appendChild(acceptBtn);
+    banner.appendChild(buttonContainer);
+    document.body.appendChild(banner);
+  }
+
+  // Helper function to keep button styles perfectly identical/symmetrical (GDPR requirement)
+  function setButtonStyle(button, bgColor) {
+    button.style.backgroundColor = bgColor;
+    button.style.color = 'white';
+    button.style.border = 'none';
+    button.style.padding = '10px 20px';
+    button.style.borderRadius = '4px';
+    button.style.cursor = 'pointer';
+    button.style.fontSize = '14px';
+    button.style.fontWeight = 'bold';
+    button.style.flex = '1';
+    button.style.maxWidth = '150px';
+  }
+</script>
+
 </body>
 
 </html>
