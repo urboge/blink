@@ -935,18 +935,18 @@ document.getElementById('welcome-input').addEventListener('input', () => {
 // Lightbox
 document.getElementById('lightbox').addEventListener('click', e => { if (e.target===document.getElementById('lightbox')) closeLightbox(); });
 document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
-document.addEventListener('keydown', e => { if (e.key==='Escape') { closeLightbox(); document.getElementById('settings-panel').classList.remove('open'); } });
+document.addEventListener('keydown', e => { if (e.key==='Escape') { closeLightbox(); document.getElementById('settings-overlay').classList.remove('open'); } });
 
 document.getElementById('settings-upload-avatar').addEventListener('click', () => document.getElementById('avatar-file-input').click());
 document.getElementById('avatar-file-input').addEventListener('change', async e => {
   const file = e.target.files[0]; e.target.value = '';
   if (!file) return;
   await setProfilePicture(file);
-  document.getElementById('settings-panel').classList.remove('open');
+  document.getElementById('settings-overlay').classList.remove('open');
 });
 document.getElementById('settings-remove-avatar').addEventListener('click', () => {
   removeProfilePicture();
-  document.getElementById('settings-panel').classList.remove('open');
+  document.getElementById('settings-overlay').classList.remove('open');
 });
 
 // Settings button
@@ -954,7 +954,7 @@ document.getElementById('settings-btn').addEventListener('click', () => {
   document.getElementById('settings-username-val').textContent = '@' + myUsername;
   updateMyAvatarUI();
   updateNotificationToggleUI();
-  document.getElementById('settings-panel').classList.toggle('open');
+  document.getElementById('settings-overlay').classList.add('open');
 });
 
 document.getElementById('notif-toggle').addEventListener('change', async e => {
@@ -974,9 +974,9 @@ document.getElementById('notif-toggle').addEventListener('change', async e => {
   updateNotificationToggleUI();
   toast('Notifications ' + (notificationsOn ? 'on' : 'off'));
 });
-document.getElementById('settings-close').addEventListener('click', () => document.getElementById('settings-panel').classList.remove('open'));
+document.getElementById('settings-close').addEventListener('click', () => document.getElementById('settings-overlay').classList.remove('open'));
 document.getElementById('settings-change-username').addEventListener('click', () => {
-  document.getElementById('settings-panel').classList.remove('open');
+  document.getElementById('settings-overlay').classList.remove('open');
   document.getElementById('username-input').value = myUsername;
   document.getElementById('username-modal').classList.add('open');
   document.getElementById('username-input').focus();
