@@ -1,246 +1,229 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <script>
-        window.dataLayer = window.dataLayer || [];
-        function gtag() { dataLayer.push(arguments); }
-
-        if (localStorage.getItem('cookieConsent') === 'granted') {
-            gtag('consent', 'default', {
-                'analytics_storage': 'granted',
-                'ad_storage': 'granted',
-                'ad_user_data': 'granted',
-                'ad_personalization': 'granted'
-            });
-        } else {
-            gtag('consent', 'default', {
-                'analytics_storage': 'denied',
-                'ad_storage': 'denied',
-                'ad_user_data': 'denied',
-                'ad_personalization': 'denied'
-            });
-        }
-    </script>
-
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-JH6J9DNLD3"></script>
-    <script>
-        gtag('js', new Date());
-        gtag('config', 'G-JH6J9DNLD3');
-    </script>
-
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Blink</title>
-    <link rel="stylesheet" href="blink.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Blink</title>
+<link rel="stylesheet" href="blink.css">
 </head>
-
 <body>
 
-    <div id="splash">
-        <div id="splash-logo">
-            <div id="splash-icon">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-            </div>
-            <span id="splash-wordmark">Blink</span>
-        </div>
-        <div id="splash-tagline">Messages that disappear.</div>
+<!-- SPLASH -->
+<div id="splash">
+  <div id="splash-logo">
+    <div id="splash-icon">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+    </div>
+    <span id="splash-wordmark">Blink</span>
+  </div>
+  <div id="splash-tagline">Messages that disappear.</div>
+</div>
+
+<!-- APP -->
+<div id="app">
+
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h1>Blink</h1>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button id="edit-btn" title="Edit contacts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+        <button id="new-group-btn" title="New group">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </button>
+        <button id="new-contact-btn" title="New contact">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <line x1="19" y1="8" x2="19" y2="14"/>
+          <line x1="16" y1="11" x2="22" y2="11"/>
+        </svg>
+      </button>
+      </div>
+    </div>
+    <div id="search-wrap">
+      <input id="search" type="text" placeholder="Search">
+    </div>
+    <div id="edit-action-bar">
+      <button id="edit-mark-read" class="edit-action-btn" disabled>Mark Read</button>
+      <button id="edit-rename" class="edit-action-btn" disabled>Rename</button>
+      <button id="edit-delete" class="edit-action-btn danger" disabled>Delete</button>
+    </div>
+    <div id="my-code-bar" title="Click to copy your code">
+      <span>Your code</span>
+      <span class="code-val" id="my-code-display">—</span>
+      <span class="copy-hint">Copy</span>
+    </div>
+    <div id="contacts-list"></div>
+  </div>
+
+  <!-- CHAT AREA -->
+  <div id="chat-area">
+    <div id="empty-state">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      <p>Select a contact to start messaging</p>
     </div>
 
-    <div id="app">
-        <div id="sidebar">
-            <div id="sidebar-header">
-                <h1>Blink</h1>
-                <button id="new-contact-btn" title="New contact">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                        <circle cx="9" cy="7" r="4" />
-                        <line x1="19" y1="8" x2="19" y2="14" />
-                        <line x1="16" y1="11" x2="22" y2="11" />
-                    </svg>
-                </button>
-            </div>
-            <div id="search-wrap">
-                <input id="search" type="text" placeholder="Search">
-            </div>
-            <div id="my-code-bar" title="Click to copy your code">
-                <span>Your code</span>
-                <span class="code-val" id="my-code-display">—</span>
-                <span class="copy-hint">Copy</span>
-            </div>
-            <div id="contacts-list"></div>
+    <div id="chat-main" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
+      <div id="chat-header">
+        <button id="back-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+        <div class="avatar" id="chat-avatar"></div>
+        <div>
+          <div id="chat-header-name"></div>
+          <div id="chat-header-code"></div>
+          <div id="chat-header-sub" style="display:none;font-size:11px;color:#8e8e93;margin-top:1px"></div>
+        </div>
+      </div>
+
+      <div id="messages-wrap"></div>
+
+      <div id="input-area">
+        <!-- Image URL panel -->
+        <!-- Hidden file input -->
+        <input type="file" id="image-file-input" accept="image/*" style="display:none">
+
+
+        <!-- Sticker panel -->
+        <div id="sticker-panel">
+          <div id="sticker-panel-header">
+            <div id="sticker-tabs"></div>
+            <button id="create-sticker-btn" style="display:none" title="Create sticker from photo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Create
+            </button>
+          </div>
+          <input type="file" id="sticker-file-input" accept="image/*" style="display:none">
+          <div id="sticker-grid"></div>
         </div>
 
-        <div id="chat-area">
-            <div id="empty-state">
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                <p>Select a contact to start messaging</p>
-            </div>
+        <!-- Image button -->
+        <button class="input-btn" id="image-btn" title="Send image">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        </button>
 
-            <div id="chat-main" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
-                <div id="chat-header">
-                    <button id="back-btn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="15 18 9 12 15 6" />
-                        </svg>
-                    </button>
-                    <div class="avatar" id="chat-avatar"></div>
-                    <div>
-                        <div id="chat-header-name"></div>
-                        <div id="chat-header-code"></div>
-                    </div>
-                </div>
+        <!-- Sticker button -->
+        <button class="input-btn" id="sticker-btn" title="Send sticker">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
+            <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+            <line x1="9" y1="9" x2="9.01" y2="9"/>
+            <line x1="15" y1="9" x2="15.01" y2="9"/>
+          </svg>
+        </button>
 
-                <div id="messages-wrap"></div>
-
-                <div id="input-area">
-                    <div id="image-panel">
-                        <label>Paste an image URL</label>
-                        <input type="url" id="image-url-input" placeholder="https://i.imgur.com/example.jpg">
-                        <button id="image-send-btn">Send Image</button>
-                    </div>
-
-                    <div id="sticker-panel">
-                        <div id="sticker-tabs"></div>
-                        <div id="sticker-grid"></div>
-                    </div>
-
-                    <button class="input-btn" id="image-btn" title="Send image">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="3" y="3" width="18" height="18" rx="2" />
-                            <circle cx="8.5" cy="8.5" r="1.5" />
-                            <polyline points="21 15 16 10 5 21" />
-                        </svg>
-                    </button>
-
-                    <button class="input-btn" id="sticker-btn" title="Send sticker">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z" />
-                            <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-                            <line x1="9" y1="9" x2="9.01" y2="9" />
-                            <line x1="15" y1="9" x2="15.01" y2="9" />
-                        </svg>
-                    </button>
-
-                    <div id="msg-input-wrap">
-                        <textarea id="msg-input" placeholder="Blink" rows="1"></textarea>
-                    </div>
-                    <button id="send-btn" disabled>
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 4l8 16-8-4-8 4 8-16z" />
-                        </svg>
-                    </button>
-                </div>
-            </div>
+        <div id="msg-input-wrap">
+          <textarea id="msg-input" placeholder="Blink" rows="1"></textarea>
         </div>
+        <button id="send-btn" disabled>
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 4l8 16-8-4-8 4 8-16z"/>
+          </svg>
+        </button>
+      </div>
     </div>
+  </div>
 
-    <div class="modal-overlay" id="modal">
-        <div class="modal">
-            <h2>New Contact</h2>
-            <div>
-                <label>Name</label>
-                <input type="text" id="contact-name-input" placeholder="e.g. Sarah">
-            </div>
-            <div>
-                <label>Their code</label>
-                <input type="text" id="contact-code-input" placeholder="e.g. x7k9m2ab">
-            </div>
-            <div class="modal-actions">
-                <button class="btn-cancel" id="modal-cancel">Cancel</button>
-                <button class="btn-add" id="modal-add">Add</button>
-            </div>
-        </div>
+</div><!-- /app -->
+
+<!-- NEW CONTACT MODAL -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h2>New Contact</h2>
+    <div>
+      <label>Name</label>
+      <input type="text" id="contact-name-input" placeholder="e.g. Sarah">
     </div>
+    <div>
+      <label>Their code</label>
+      <input type="text" id="contact-code-input" placeholder="e.g. x7k9m2ab">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="modal-cancel">Cancel</button>
+      <button class="btn-add" id="modal-add">Add</button>
+    </div>
+  </div>
+</div>
 
-    <div id="toast"></div>
+<!-- GROUP MODAL -->
+<div class="modal-overlay" id="group-modal">
+  <div class="modal">
+    <h2>New Group</h2>
+    <div>
+      <label>Group name</label>
+      <input type="text" id="group-name-input" placeholder="e.g. Family">
+    </div>
+    <div>
+      <label>Add members</label>
+      <div id="group-member-list" style="display:flex;flex-direction:column;gap:8px;max-height:180px;overflow-y:auto;margin-top:4px"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="group-modal-cancel">Cancel</button>
+      <button class="btn-add" id="group-modal-create">Create</button>
+    </div>
+  </div>
+</div>
 
-    <script src="blink.js"></script>
+<!-- RENAME MODAL -->
+<div class="modal-overlay" id="rename-modal">
+  <div class="modal">
+    <h2>Rename Contact</h2>
+    <div>
+      <label>New name</label>
+      <input type="text" id="rename-input" placeholder="Enter name">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="rename-cancel">Cancel</button>
+      <button class="btn-add" id="rename-confirm">Save</button>
+    </div>
+  </div>
+</div>
 
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            if (!localStorage.getItem('cookieConsent')) {
-                createConsentBanner();
-            }
-        });
+<!-- DELETE MODAL -->
+<div class="modal-overlay" id="delete-modal">
+  <div class="modal">
+    <h2>Delete Contact</h2>
+    <p style="color:#8e8e93;font-size:14px;line-height:1.5;">Delete <strong id="delete-name" style="color:#fff"></strong>? This will remove the contact and all chat history on your device.</p>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="delete-cancel">Cancel</button>
+      <button class="btn-delete" id="delete-confirm">Delete</button>
+    </div>
+  </div>
+</div>
 
-        function createConsentBanner() {
-            const banner = document.createElement('div');
-            banner.id = 'custom-cookie-banner';
-            
-            banner.style.position = 'fixed';
-            banner.style.bottom = '20px';
-            banner.style.left = '50%';
-            banner.style.transform = 'translateX(-50%)';
-            banner.style.width = '90%';
-            banner.style.maxWidth = '600px';
-            banner.style.backgroundColor = '#1a1a1a';
-            banner.style.color = '#ffffff';
-            banner.style.padding = '20px';
-            banner.style.borderRadius = '8px';
-            banner.style.boxShadow = '0px 4px 15px rgba(0,0,0,0.3)';
-            banner.style.fontFamily = 'sans-serif';
-            banner.style.zIndex = '999999';
-            banner.style.display = 'flex';
-            banner.style.flexDirection = 'column';
-            banner.style.gap = '15px';
+<!-- LIGHTBOX -->
+<div id="lightbox">
+  <button id="lightbox-close">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>
+  </button>
+  <img id="lightbox-img" src="" alt="full image">
+</div>
 
-            const text = document.createElement('p');
-            text.style.margin = '0';
-            text.style.fontSize = '14px';
-            text.style.lineHeight = '1.5';
-            text.innerHTML = 'We use cookies to analyze our website traffic via Google Analytics. You can choose to accept or reject this tracking.';
-            banner.appendChild(text);
+<div id="toast"></div>
 
-            const buttonContainer = document.createElement('div');
-            buttonContainer.style.display = 'flex';
-            buttonContainer.style.gap = '10px';
-            buttonContainer.style.justifyContent = 'flex-end';
-
-            const rejectBtn = document.createElement('button');
-            rejectBtn.innerText = 'Reject All';
-            setButtonStyle(rejectBtn, '#444444');
-            rejectBtn.onclick = function() {
-                localStorage.setItem('cookieConsent', 'denied');
-                banner.remove();
-            };
-
-            const acceptBtn = document.createElement('button');
-            acceptBtn.innerText = 'Accept All';
-            setButtonStyle(acceptBtn, '#007bff');
-            acceptBtn.onclick = function() {
-                localStorage.setItem('cookieConsent', 'granted');
-                gtag('consent', 'update', {
-                    'analytics_storage': 'granted',
-                    'ad_storage': 'granted',
-                    'ad_user_data': 'granted',
-                    'ad_personalization': 'granted'
-                });
-                banner.remove();
-            };
-
-            buttonContainer.appendChild(rejectBtn);
-            buttonContainer.appendChild(acceptBtn);
-            banner.appendChild(buttonContainer);
-            document.body.appendChild(banner);
-        }
-
-        function setButtonStyle(button, bgColor) {
-            button.style.backgroundColor = bgColor;
-            button.style.color = 'white';
-            button.style.border = 'none';
-            button.style.padding = '10px 20px';
-            button.style.borderRadius = '4px';
-            button.style.cursor = 'pointer';
-            button.style.fontSize = '14px';
-            button.style.fontWeight = 'bold';
-            button.style.flex = '1';
-            button.style.maxWidth = '150px';
-        }
-    </script>
+<script src="blink.js"></script>
 </body>
 </html>
