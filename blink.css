@@ -81,7 +81,7 @@ body {
 }
 
 /* SIDEBAR */
-#sidebar { width: 300px; min-width: 300px; background: var(--sidebar-bg); display: flex; flex-direction: column; border-right: 1px solid var(--divider); transition: transform 0.3s ease; position: relative; overflow: hidden; }
+#sidebar { width: 300px; min-width: 300px; background: var(--sidebar-bg); display: flex; flex-direction: column; border-right: 1px solid var(--divider); transition: transform 0.3s ease; position: relative; }
 #sidebar-header { padding: 16px 16px 8px; display: flex; align-items: center; justify-content: space-between; }
 #sidebar-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.4px; }
 
@@ -370,16 +370,26 @@ body {
 
 /* SETTINGS PANEL */
 #settings-panel {
-  display: none; position: absolute; bottom: 0; left: 0; right: 0;
+  display: none; position: fixed; bottom: 0; left: 0;
+  width: 300px;
   background: #1c1c1e; border-top: 1px solid var(--divider);
   border-radius: 16px 16px 0 0; padding: 0 16px 24px;
   box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
   animation: slideUp 0.25s cubic-bezier(0.34,1.1,0.64,1);
-  z-index: 50;
-  max-height: 90%;
+  z-index: 500;
+  max-height: 90dvh;
   overflow-y: auto;
 }
 #settings-panel.open { display: block; }
+
+/* On mobile settings panel takes full width */
+@media (max-width: 640px) {
+  #settings-panel { width: 100%; left: 0; }
+}
+/* On tablet match sidebar width */
+@media (min-width: 641px) and (max-width: 1024px) {
+  #settings-panel { width: 260px; }
+}
 @keyframes slideUp { from { transform: translateY(100%); opacity:0; } to { transform: translateY(0); opacity:1; } }
 #settings-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 0 12px; font-size: 16px; font-weight: 600; }
 #settings-close { background: none; border: none; color: var(--text-secondary); font-size: 18px; cursor: pointer; padding: 4px; }
