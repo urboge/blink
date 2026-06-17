@@ -8,6 +8,22 @@
 </head>
 <body>
 
+<!-- WELCOME SCREEN -->
+<div id="welcome-screen" style="display:none">
+  <div id="welcome-box">
+    <div id="welcome-icon">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+    </div>
+    <h1>Welcome to Blink</h1>
+    <p>Choose a username. This is your address — share it so people can message you.</p>
+    <input type="text" id="welcome-input" placeholder="e.g. alex" maxlength="24" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <div id="welcome-hint">No spaces. Letters, numbers and _ only.</div>
+    <button id="welcome-btn">Get Started</button>
+  </div>
+</div>
+
 <!-- SPLASH -->
 <div id="splash">
   <div id="splash-logo">
@@ -44,29 +60,80 @@
           </svg>
         </button>
         <button id="new-contact-btn" title="New contact">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
-          <circle cx="9" cy="7" r="4"/>
-          <line x1="19" y1="8" x2="19" y2="14"/>
-          <line x1="16" y1="11" x2="22" y2="11"/>
-        </svg>
-      </button>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <line x1="19" y1="8" x2="19" y2="14"/>
+            <line x1="16" y1="11" x2="22" y2="11"/>
+          </svg>
+        </button>
       </div>
     </div>
+
+    <div id="edit-action-bar">
+      <button id="edit-mark-read" class="edit-action-btn" disabled>Mark Read</button>
+      <button id="edit-rename"    class="edit-action-btn" disabled>Rename</button>
+      <button id="edit-delete"    class="edit-action-btn danger" disabled>Delete</button>
+    </div>
+
     <div id="search-wrap">
       <input id="search" type="text" placeholder="Search">
     </div>
-    <div id="edit-action-bar">
-      <button id="edit-mark-read" class="edit-action-btn" disabled>Mark Read</button>
-      <button id="edit-rename" class="edit-action-btn" disabled>Rename</button>
-      <button id="edit-delete" class="edit-action-btn danger" disabled>Delete</button>
-    </div>
-    <div id="my-code-bar" title="Click to copy your code">
-      <span>Your code</span>
-      <span class="code-val" id="my-code-display">—</span>
+
+    <div id="my-code-bar" title="Tap to copy your username">
+      <span>You</span>
+      <span class="code-val">@<span id="my-username-display">—</span></span>
       <span class="copy-hint">Copy</span>
     </div>
+
     <div id="contacts-list"></div>
+
+    <!-- Settings button bottom of sidebar -->
+    <button id="settings-btn" title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+      Settings
+    </button>
+
+    <!-- Settings panel (slides up) -->
+    <div id="settings-panel">
+      <div id="settings-header">
+        <span>Settings</span>
+        <button id="settings-close">✕</button>
+      </div>
+      <!-- Avatar row -->
+      <div class="settings-row">
+        <div class="settings-label">Profile Picture</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div id="my-avatar-preview" class="avatar settings-avatar">?</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <button class="settings-mini-btn" id="settings-upload-avatar">Upload</button>
+            <button class="settings-mini-btn danger" id="settings-remove-avatar">Remove</button>
+          </div>
+        </div>
+      </div>
+      <input type="file" id="avatar-file-input" accept="image/*" style="display:none">
+      <!-- Username row -->
+      <div class="settings-row">
+        <div class="settings-label">Username</div>
+        <div class="settings-val" id="settings-username-val">@—</div>
+      </div>
+      <button class="settings-action-btn" id="settings-change-username">Change Username</button>
+      <!-- Notifications row -->
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Notifications</div>
+          <div id="notif-hint" style="font-size:11px;color:#8e8e93;margin-top:2px">Off</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="notif-toggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <p class="settings-note">Changing your username will notify all your contacts automatically.</p>
+    </div>
   </div>
 
   <!-- CHAT AREA -->
@@ -81,9 +148,7 @@
     <div id="chat-main" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
       <div id="chat-header">
         <button id="back-btn">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <div class="avatar" id="chat-avatar"></div>
         <div>
@@ -96,50 +161,37 @@
       <div id="messages-wrap"></div>
 
       <div id="input-area">
-        <!-- Image URL panel -->
-        <!-- Hidden file input -->
-        <input type="file" id="image-file-input" accept="image/*" style="display:none">
+        <input type="file" id="image-file-input"   accept="image/*" style="display:none">
+        <input type="file" id="sticker-file-input" accept="image/*" style="display:none">
 
-
-        <!-- Sticker panel -->
         <div id="sticker-panel">
           <div id="sticker-panel-header">
             <div id="sticker-tabs"></div>
-            <button id="create-sticker-btn" style="display:none" title="Create sticker from photo">
+            <button id="create-sticker-btn" style="display:none" title="Create sticker">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Create
             </button>
           </div>
-          <input type="file" id="sticker-file-input" accept="image/*" style="display:none">
           <div id="sticker-grid"></div>
         </div>
 
-        <!-- Image button -->
         <button class="input-btn" id="image-btn" title="Send image">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <circle cx="8.5" cy="8.5" r="1.5"/>
-            <polyline points="21 15 16 10 5 21"/>
+            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
           </svg>
         </button>
-
-        <!-- Sticker button -->
         <button class="input-btn" id="sticker-btn" title="Send sticker">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/>
             <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-            <line x1="9" y1="9" x2="9.01" y2="9"/>
-            <line x1="15" y1="9" x2="15.01" y2="9"/>
+            <line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>
           </svg>
         </button>
-
         <div id="msg-input-wrap">
           <textarea id="msg-input" placeholder="Blink" rows="1"></textarea>
         </div>
         <button id="send-btn" disabled>
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 4l8 16-8-4-8 4 8-16z"/>
-          </svg>
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 16-8-4-8 4 8-16z"/></svg>
         </button>
       </div>
     </div>
@@ -147,21 +199,14 @@
 
 </div><!-- /app -->
 
-<!-- NEW CONTACT MODAL -->
-<div class="modal-overlay" id="modal">
+<!-- USERNAME MODAL -->
+<div class="modal-overlay" id="username-modal">
   <div class="modal">
-    <h2>New Contact</h2>
-    <div>
-      <label>Name</label>
-      <input type="text" id="contact-name-input" placeholder="e.g. Sarah">
-    </div>
-    <div>
-      <label>Their code</label>
-      <input type="text" id="contact-code-input" placeholder="e.g. x7k9m2ab">
-    </div>
+    <h2>Change Username</h2>
+    <div><label>New username</label><input type="text" id="username-input" placeholder="e.g. alex" maxlength="24" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
     <div class="modal-actions">
-      <button class="btn-cancel" id="modal-cancel">Cancel</button>
-      <button class="btn-add" id="modal-add">Add</button>
+      <button class="btn-cancel" id="username-cancel">Cancel</button>
+      <button class="btn-add"    id="username-confirm">Save</button>
     </div>
   </div>
 </div>
@@ -170,17 +215,24 @@
 <div class="modal-overlay" id="group-modal">
   <div class="modal">
     <h2>New Group</h2>
-    <div>
-      <label>Group name</label>
-      <input type="text" id="group-name-input" placeholder="e.g. Family">
-    </div>
-    <div>
-      <label>Add members</label>
-      <div id="group-member-list" style="display:flex;flex-direction:column;gap:8px;max-height:180px;overflow-y:auto;margin-top:4px"></div>
-    </div>
+    <div><label>Group name</label><input type="text" id="group-name-input" placeholder="e.g. Family"></div>
+    <div><label>Add members</label><div id="group-member-list" style="display:flex;flex-direction:column;gap:8px;max-height:180px;overflow-y:auto;margin-top:4px"></div></div>
     <div class="modal-actions">
       <button class="btn-cancel" id="group-modal-cancel">Cancel</button>
-      <button class="btn-add" id="group-modal-create">Create</button>
+      <button class="btn-add"    id="group-modal-create">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW CONTACT MODAL -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h2>New Contact</h2>
+    <div><label>Name</label><input type="text" id="contact-name-input" placeholder="e.g. Sarah"></div>
+    <div><label>Their username</label><input type="text" id="contact-code-input" placeholder="e.g. sarah_92" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="modal-cancel">Cancel</button>
+      <button class="btn-add"    id="modal-add">Add</button>
     </div>
   </div>
 </div>
@@ -189,13 +241,10 @@
 <div class="modal-overlay" id="rename-modal">
   <div class="modal">
     <h2>Rename Contact</h2>
-    <div>
-      <label>New name</label>
-      <input type="text" id="rename-input" placeholder="Enter name">
-    </div>
+    <div><label>New name</label><input type="text" id="rename-input" placeholder="Enter name"></div>
     <div class="modal-actions">
       <button class="btn-cancel" id="rename-cancel">Cancel</button>
-      <button class="btn-add" id="rename-confirm">Save</button>
+      <button class="btn-add"    id="rename-confirm">Save</button>
     </div>
   </div>
 </div>
@@ -203,7 +252,7 @@
 <!-- DELETE MODAL -->
 <div class="modal-overlay" id="delete-modal">
   <div class="modal">
-    <h2>Delete Contact</h2>
+    <h2>Delete</h2>
     <p style="color:#8e8e93;font-size:14px;line-height:1.5;">Delete <strong id="delete-name" style="color:#fff"></strong>? This will remove the contact and all chat history on your device.</p>
     <div class="modal-actions">
       <button class="btn-cancel" id="delete-cancel">Cancel</button>
@@ -223,7 +272,6 @@
 </div>
 
 <div id="toast"></div>
-
 <script src="blink.js"></script>
 </body>
 </html>
