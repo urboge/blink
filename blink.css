@@ -356,17 +356,10 @@ body {
   #msg-input { font-size: 16px; }
 }
 
-/* SETTINGS BUTTON */
-#settings-btn {
-  display: flex; align-items: center; gap: 8px;
-  width: calc(100% - 32px); margin: 8px 16px 16px;
-  padding: 11px 14px; background: var(--contact-hover);
-  border: none; border-radius: 12px; color: var(--text-secondary);
-  font-size: 14px; font-family: inherit; cursor: pointer;
-  transition: background 0.15s;
-}
-#settings-btn:hover { background: var(--contact-active); color: #fff; }
-#settings-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+/* SETTINGS BUTTON (header icon) */
+#settings-btn { background: none; border: none; cursor: pointer; color: #2563eb; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: background 0.15s; }
+#settings-btn:hover { background: var(--contact-hover); }
+#settings-btn svg { width: 18px; height: 18px; }
 
 /* SETTINGS PANEL */
 #settings-panel {
