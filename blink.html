@@ -97,43 +97,41 @@
       Settings
     </button>
 
-    <!-- Settings panel (slides up) -->
-    <div id="settings-panel">
-      <div id="settings-header">
-        <span>Settings</span>
-        <button id="settings-close">✕</button>
-      </div>
-      <!-- Avatar row -->
-      <div class="settings-row">
-        <div class="settings-label">Profile Picture</div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div id="my-avatar-preview" class="avatar settings-avatar">?</div>
-          <div style="display:flex;flex-direction:column;gap:6px;">
-            <button class="settings-mini-btn" id="settings-upload-avatar">Upload</button>
-            <button class="settings-mini-btn danger" id="settings-remove-avatar">Remove</button>
-          </div>
-        </div>
-      </div>
-      <input type="file" id="avatar-file-input" accept="image/*" style="display:none">
-      <!-- Username row -->
-      <div class="settings-row">
-        <div class="settings-label">Username</div>
-        <div class="settings-val" id="settings-username-val">@—</div>
-      </div>
-      <button class="settings-action-btn" id="settings-change-username">Change Username</button>
-      <!-- Notifications row -->
-      <div class="settings-row">
-        <div>
-          <div class="settings-label">Notifications</div>
-          <div id="notif-hint" style="font-size:11px;color:#8e8e93;margin-top:2px">Off</div>
-        </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="notif-toggle">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      <p class="settings-note">Changing your username will notify all your contacts automatically.</p>
+  </div><!-- /sidebar -->
+
+  <!-- Settings panel — outside sidebar so overflow:hidden doesn't clip it -->
+  <div id="settings-panel">
+    <div id="settings-header">
+      <span>Settings</span>
+      <button id="settings-close">✕</button>
     </div>
+    <div class="settings-row">
+      <div class="settings-label">Profile Picture</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div id="my-avatar-preview" class="avatar settings-avatar">?</div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <button class="settings-mini-btn" id="settings-upload-avatar">Upload</button>
+          <button class="settings-mini-btn danger" id="settings-remove-avatar">Remove</button>
+        </div>
+      </div>
+    </div>
+    <input type="file" id="avatar-file-input" accept="image/*" style="display:none">
+    <div class="settings-row">
+      <div class="settings-label">Username</div>
+      <div class="settings-val" id="settings-username-val">@—</div>
+    </div>
+    <button class="settings-action-btn" id="settings-change-username">Change Username</button>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">Notifications</div>
+        <div id="notif-hint" style="font-size:11px;color:#8e8e93;margin-top:2px">Off</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="notif-toggle">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <p class="settings-note">Changing your username will notify all your contacts automatically.</p>
   </div>
 
   <!-- CHAT AREA -->
