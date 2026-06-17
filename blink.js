@@ -109,9 +109,17 @@ async function init() {
 
   if (!myUsername) {
     document.getElementById('welcome-screen').style.display = 'flex';
+    // App still needs to be visible behind welcome on desktop
+    const appEl = document.getElementById('app');
+    appEl.style.animation = 'none';
+    appEl.style.opacity = '1';
     return;
   }
 
+  // Skip splash animation for returning users — show immediately
+  const appEl = document.getElementById('app');
+  appEl.style.animation = 'none';
+  appEl.style.opacity = '1';
   startApp();
 }
 
@@ -912,6 +920,10 @@ document.getElementById('welcome-btn').addEventListener('click', async () => {
   }
   await setUsername(val, true);
   document.getElementById('welcome-screen').style.display = 'none';
+  // Skip splash animation — go straight to full opacity
+  const appEl = document.getElementById('app');
+  appEl.style.animation = 'none';
+  appEl.style.opacity = '1';
   startApp();
 });
 document.getElementById('welcome-input').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('welcome-btn').click(); });
