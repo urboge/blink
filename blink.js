@@ -1,49 +1,149 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const SUPABASE_URL  = 'https://gkrfiyalbjbgkjevmpod.supabase.co';
-const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrcmZpeWFsYmpiZ2tqZXZtcG9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjA0OTksImV4cCI6MjA5NzE5NjQ5OX0.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
-const TABLE         = 'messages';
-const POLL_INTERVAL = 3000;
-const SERVER_LIMIT  = 500; // max undelivered messages before blocking sends
+const SUPABASE_URL    = 'https://gkrfiyalbjbgkjevmpod.supabase.co';
+const SUPABASE_KEY    = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrcmZpeWFsYmpiZ2tqZXZtcG9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjA0OTksImV4cCI6MjA5NzE5NjQ5OX0.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
+const TABLE           = 'messages';
+const POLL_INTERVAL   = 3000;
+const SERVER_LIMIT    = 500;
+const MAX_IMAGE_BYTES = 100 * 1024;
+const MAX_STICKER_BYTES = 20 * 1024;
+const IMAGE_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let myCode          = '';
-let contacts        = [];
-let chats           = {};
-let activeCode      = null;
-let stickerData     = [];
+let myCode           = '';
+let myName           = '';
+let contacts         = [];
+let chats            = {};
+let groups           = [];
+let activeCode       = null;
+let activeType       = 'dm'; // 'dm' or 'group'
+let stickerData      = [];
 let activeStickerCat = 'favourites';
-let favStickers     = [];
+let favStickers      = [];
+let customStickers   = [];
+let editMode         = false;
+let selectedContacts = new Set();
 
 const REACTIONS     = ['👍','❤️','😂','😮','😢','🔥'];
 const AVATAR_COLORS = ['av-blue','av-purple','av-pink','av-green','av-orange','av-teal'];
 const isMobile      = () => window.innerWidth <= 640;
-
-// ─── INIT ─────────────────────────────────────────────────────────────────────
-async function init() {
-  myCode      = ls('myCode') || generateCode();
-  ls('myCode', myCode);
-  document.getElementById('my-code-display').textContent = myCode;
-  contacts    = JSON.parse(ls('contacts')    || '[]');
-  chats       = JSON.parse(ls('chats')       || '{}');
-  favStickers = JSON.parse(ls('favStickers') || '[]');
-  renderContacts();
-  await loadStickers();
-  if (SUPABASE_URL && SUPABASE_KEY) setInterval(pollMessages, POLL_INTERVAL);
-
-  // Reopen last chat
-  const lastChat = ls('lastChat');
-  if (lastChat && contacts.find(c => c.code === lastChat)) openChat(lastChat);
-}
 
 // ─── LOCALSTORAGE ─────────────────────────────────────────────────────────────
 function ls(key, val) {
   if (val === undefined) return localStorage.getItem(key);
   localStorage.setItem(key, typeof val === 'string' ? val : JSON.stringify(val));
 }
-function saveContacts()    { ls('contacts',    JSON.stringify(contacts)); }
-function saveChats()       { ls('chats',       JSON.stringify(chats)); }
-function saveFavStickers() { ls('favStickers', JSON.stringify(favStickers)); }
-function generateCode()    { return Math.random().toString(36).slice(2, 10); }
+function saveContacts()      { ls('contacts',      JSON.stringify(contacts)); }
+function saveChats()         { ls('chats',         JSON.stringify(chats)); }
+function saveGroups()        { ls('groups',        JSON.stringify(groups)); }
+function saveFavStickers()   { ls('favStickers',   JSON.stringify(favStickers)); }
+function saveCustomStickers(){ ls('customStickers',JSON.stringify(customStickers)); }
+function generateCode()      { return Math.random().toString(36).slice(2, 10); }
+
+// ─── IMAGE EXPIRY ─────────────────────────────────────────────────────────────
+function cleanExpiredImages() {
+  const expiry = Date.now() - IMAGE_EXPIRY_MS;
+  let changed = false;
+  Object.keys(chats).forEach(code => {
+    if (!chats[code]) return;
+    chats[code] = chats[code].map(m => {
+      if (m.type === 'image' && m.text?.startsWith('data:') && m.time < expiry) {
+        changed = true;
+        return { ...m, text: null, expired: true };
+      }
+      return m;
+    });
+  });
+  if (changed) saveChats();
+}
+
+// ─── IMAGE COMPRESSION ────────────────────────────────────────────────────────
+async function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      const maxDim = 1200;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+        else       { w = Math.round(w * maxDim / h); h = maxDim; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      let quality = 0.85;
+      const tryCompress = () => {
+        canvas.toBlob(blob => {
+          if (!blob) { reject(new Error('Compression failed')); return; }
+          if (blob.size <= MAX_IMAGE_BYTES || quality <= 0.1) {
+            const reader = new FileReader();
+            reader.onload = e => resolve(e.target.result);
+            reader.readAsDataURL(blob);
+          } else { quality = Math.max(0.1, quality - 0.1); tryCompress(); }
+        }, 'image/jpeg', quality);
+      };
+      tryCompress();
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+// ─── STICKER COMPRESSION ──────────────────────────────────────────────────────
+async function compressSticker(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      const maxDim = 300;
+      if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+      else       { w = Math.round(w * maxDim / h); h = maxDim; }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      let quality = 0.7;
+      const tryCompress = () => {
+        canvas.toBlob(blob => {
+          if (!blob) { reject(new Error('Failed')); return; }
+          if (blob.size <= MAX_STICKER_BYTES || quality <= 0.05) {
+            const reader = new FileReader();
+            reader.onload = e => resolve(e.target.result);
+            reader.readAsDataURL(blob);
+          } else { quality = Math.max(0.05, quality - 0.1); tryCompress(); }
+        }, 'image/jpeg', quality);
+      };
+      tryCompress();
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+async function init() {
+  myCode         = ls('myCode') || generateCode();
+  myName         = ls('myName') || '';
+  ls('myCode', myCode);
+  document.getElementById('my-code-display').textContent = myCode;
+  contacts       = JSON.parse(ls('contacts')       || '[]');
+  chats          = JSON.parse(ls('chats')          || '{}');
+  groups         = JSON.parse(ls('groups')         || '[]');
+  favStickers    = JSON.parse(ls('favStickers')    || '[]');
+  customStickers = JSON.parse(ls('customStickers') || '[]');
+  cleanExpiredImages();
+  renderContacts();
+  await loadStickers();
+  if (SUPABASE_URL && SUPABASE_KEY) setInterval(pollMessages, POLL_INTERVAL);
+  const lastChat = ls('lastChat');
+  const lastType = ls('lastType') || 'dm';
+  if (lastChat) {
+    if (lastType === 'group' && groups.find(g => g.id === lastChat)) openGroup(lastChat);
+    else if (lastType === 'dm' && contacts.find(c => c.code === lastChat)) openChat(lastChat);
+  }
+}
 
 // ─── AVATAR ───────────────────────────────────────────────────────────────────
 function avatarColor(code) {
@@ -51,6 +151,15 @@ function avatarColor(code) {
   return AVATAR_COLORS[n % AVATAR_COLORS.length];
 }
 function avatarLetter(name) { return name.trim()[0].toUpperCase(); }
+
+function groupAvatarSVG(color) {
+  return `<svg class="group-avatar-svg" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="22" cy="22" r="22" class="${color}"/>
+    <circle cx="16" cy="18" r="5" fill="rgba(255,255,255,0.9)"/>
+    <circle cx="28" cy="18" r="5" fill="rgba(255,255,255,0.9)"/>
+    <path d="M6 34c0-5.523 4.477-9 10-9h2M38 34c0-5.523-4.477-9-10-9h-2M14 34c0-4.418 3.582-7 8-7s8 2.582 8 7" stroke="rgba(255,255,255,0.9)" stroke-width="2" stroke-linecap="round"/>
+  </svg>`;
+}
 
 // ─── MOBILE NAV ───────────────────────────────────────────────────────────────
 function showChat() {
@@ -67,68 +176,168 @@ function showSidebar() {
   document.getElementById('chat-main').style.display = 'none';
 }
 
-// ─── CONTACTS ─────────────────────────────────────────────────────────────────
+// ─── RENDER CONTACTS (DMs + Groups mixed) ─────────────────────────────────────
 function renderContacts(filter = '') {
   const list = document.getElementById('contacts-list');
   list.innerHTML = '';
-  const filtered = contacts.filter(c => c.name.toLowerCase().includes(filter.toLowerCase()));
-  if (!filtered.length) {
+
+  // Build unified list of DMs and groups
+  const items = [];
+
+  contacts.filter(c => c.name.toLowerCase().includes(filter.toLowerCase())).forEach(c => {
+    const msgs  = chats[c.code] || [];
+    const last  = msgs[msgs.length - 1];
+    items.push({ type: 'dm', data: c, last, unread: msgs.filter(m => !m.sent && !m.read).length });
+  });
+
+  groups.filter(g => g.name.toLowerCase().includes(filter.toLowerCase())).forEach(g => {
+    const msgs = chats[g.id] || [];
+    const last = msgs[msgs.length - 1];
+    items.push({ type: 'group', data: g, last, unread: msgs.filter(m => !m.sent && !m.read).length });
+  });
+
+  items.sort((a, b) => (b.last?.time || 0) - (a.last?.time || 0));
+
+  if (!items.length) {
     list.innerHTML = `<div style="text-align:center;color:#8e8e93;font-size:14px;padding:24px 16px;">No contacts yet</div>`;
     return;
   }
-  filtered.forEach(c => {
-    const msgs   = chats[c.code] || [];
-    const last   = msgs[msgs.length - 1];
-    const unread = msgs.filter(m => !m.sent && !m.read).length;
-    const preview = last
-      ? (last.type === 'sticker' ? '🎭 Sticker' : last.type === 'image' ? '🖼 Image' : (last.sent ? 'You: ' : '') + last.text)
-      : 'No messages yet';
+
+  items.forEach(item => {
+    const { type, data, last, unread } = item;
+    const id = type === 'dm' ? data.code : data.id;
+    const isActive = id === activeCode && !editMode;
+    const isSelected = selectedContacts.has(id);
+
+    let preview = 'No messages yet';
+    if (last) {
+      if (last.type === 'sticker') preview = '🎭 Sticker';
+      else if (last.type === 'image') preview = '🖼 Image';
+      else if (last.type === 'group_invite') preview = '👥 Group invite';
+      else preview = (last.sent ? 'You: ' : (last.senderName ? last.senderName + ': ' : '')) + last.text;
+    }
+
     const div = document.createElement('div');
-    div.className = 'contact-item' + (c.code === activeCode ? ' active' : '');
-    div.innerHTML = `
-      <div class="avatar ${avatarColor(c.code)}">${avatarLetter(c.name)}</div>
-      <div class="contact-info">
-        <div class="contact-name">${c.name}</div>
-        <div class="contact-preview">${preview}</div>
-      </div>
-      <div class="contact-meta">
-        ${last ? `<div class="contact-time">${formatTime(last.time)}</div>` : ''}
-        ${unread > 0 ? `<div class="unread-badge">${unread}</div>` : ''}
-      </div>`;
-    div.addEventListener('click', () => openChat(c.code));
+    div.className = 'contact-item' + (isActive ? ' active' : '') + (isSelected ? ' selected' : '');
+
+    let avatarHtml = '';
+    if (type === 'group') {
+      avatarHtml = `<div class="avatar group-avatar">${groupAvatarSVG(avatarColor(data.id))}</div>`;
+    } else {
+      avatarHtml = `<div class="avatar ${avatarColor(data.code)}">${avatarLetter(data.name)}</div>`;
+    }
+
+    if (editMode) {
+      div.innerHTML = `
+        <div class="select-circle ${isSelected ? 'checked' : ''}"></div>
+        ${avatarHtml}
+        <div class="contact-info">
+          <div class="contact-name">${data.name}</div>
+          <div class="contact-preview">${preview}</div>
+        </div>`;
+      div.addEventListener('click', () => toggleSelectContact(id));
+    } else {
+      div.innerHTML = `
+        ${avatarHtml}
+        <div class="contact-info">
+          <div class="contact-name">${data.name}</div>
+          <div class="contact-preview">${preview}</div>
+        </div>
+        <div class="contact-meta">
+          ${last ? `<div class="contact-time">${formatTime(last.time)}</div>` : ''}
+          ${unread > 0 ? `<div class="unread-badge">${unread}</div>` : ''}
+        </div>`;
+      div.addEventListener('click', () => type === 'group' ? openGroup(data.id) : openChat(data.code));
+    }
+
     list.appendChild(div);
   });
 }
 
-// ─── OPEN CHAT ────────────────────────────────────────────────────────────────
+// ─── EDIT MODE ────────────────────────────────────────────────────────────────
+function toggleEditMode() {
+  editMode = !editMode;
+  selectedContacts.clear();
+  document.getElementById('edit-btn').classList.toggle('active', editMode);
+  document.getElementById('edit-action-bar').classList.toggle('open', editMode);
+  document.getElementById('my-code-bar').style.display = editMode ? 'none' : '';
+  renderContacts(document.getElementById('search').value);
+  updateEditActions();
+}
+
+function toggleSelectContact(id) {
+  if (selectedContacts.has(id)) selectedContacts.delete(id);
+  else selectedContacts.add(id);
+  renderContacts(document.getElementById('search').value);
+  updateEditActions();
+}
+
+function updateEditActions() {
+  const n = selectedContacts.size;
+  // Rename only for single DM contact (not groups)
+  const singleDM = n === 1 && contacts.find(c => c.code === [...selectedContacts][0]);
+  document.getElementById('edit-mark-read').disabled = n === 0;
+  document.getElementById('edit-rename').disabled    = !singleDM;
+  document.getElementById('edit-delete').disabled    = n === 0;
+}
+
+// ─── OPEN DM ──────────────────────────────────────────────────────────────────
 function openChat(code) {
-  activeCode = code;
+  activeCode = code; activeType = 'dm';
   const contact = contacts.find(c => c.code === code);
   if (!contact) return;
   if (chats[code]) { chats[code].forEach(m => { if (!m.sent) m.read = true; }); saveChats(); }
   const av = document.getElementById('chat-avatar');
   av.className = 'avatar ' + avatarColor(code);
   av.textContent = avatarLetter(contact.name);
+  av.innerHTML = avatarLetter(contact.name);
   document.getElementById('chat-header-name').textContent = contact.name;
   document.getElementById('chat-header-code').textContent = code;
+  document.getElementById('chat-header-sub').style.display = 'none';
   document.getElementById('empty-state').style.display = 'none';
   const cm = document.getElementById('chat-main');
   cm.style.display = 'flex'; cm.style.flex = '1';
   cm.style.flexDirection = 'column'; cm.style.overflow = 'hidden';
-  ls('lastChat', code);
-  renderMessages(code);
+  ls('lastChat', code); ls('lastType', 'dm');
+  renderMessages(code, 'dm');
+  renderContacts(document.getElementById('search').value);
+  showChat();
+  document.getElementById('msg-input').focus();
+}
+
+// ─── OPEN GROUP ───────────────────────────────────────────────────────────────
+function openGroup(groupId) {
+  activeCode = groupId; activeType = 'group';
+  const group = groups.find(g => g.id === groupId);
+  if (!group) return;
+  if (chats[groupId]) { chats[groupId].forEach(m => { if (!m.sent) m.read = true; }); saveChats(); }
+  const av = document.getElementById('chat-avatar');
+  av.className = 'avatar group-avatar';
+  av.innerHTML = groupAvatarSVG(avatarColor(groupId));
+  document.getElementById('chat-header-name').textContent = group.name;
+  document.getElementById('chat-header-code').textContent = groupId;
+  const sub = document.getElementById('chat-header-sub');
+  sub.style.display = 'block';
+  sub.textContent = group.members.map(m => m.name).join(', ');
+  document.getElementById('empty-state').style.display = 'none';
+  const cm = document.getElementById('chat-main');
+  cm.style.display = 'flex'; cm.style.flex = '1';
+  cm.style.flexDirection = 'column'; cm.style.overflow = 'hidden';
+  ls('lastChat', groupId); ls('lastType', 'group');
+  renderMessages(groupId, 'group');
   renderContacts(document.getElementById('search').value);
   showChat();
   document.getElementById('msg-input').focus();
 }
 
 // ─── RENDER MESSAGES ──────────────────────────────────────────────────────────
-function renderMessages(code) {
+function renderMessages(code, type = 'dm') {
   const wrap = document.getElementById('messages-wrap');
   wrap.innerHTML = '';
   const msgs = chats[code] || [];
   let lastDate = null;
-  msgs.forEach((m) => {
+
+  msgs.forEach(m => {
     const d = new Date(m.time);
     if (d.toDateString() !== lastDate) {
       const sep = document.createElement('div');
@@ -137,19 +346,63 @@ function renderMessages(code) {
       wrap.appendChild(sep);
       lastDate = d.toDateString();
     }
+
+    // Group invite card
+    if (m.type === 'group_invite') {
+      const card = document.createElement('div');
+      card.className = 'invite-card';
+      const alreadyJoined = groups.find(g => g.id === m.groupId);
+      card.innerHTML = `
+        <div class="invite-icon">👥</div>
+        <div class="invite-info">
+          <div class="invite-title">${escHtml(m.groupName)}</div>
+          <div class="invite-sub">Group invite from ${escHtml(m.invitedByName)}</div>
+        </div>
+        ${alreadyJoined
+          ? `<div class="invite-joined">Joined</div>`
+          : `<button class="invite-btn" data-groupid="${m.groupId}">Join</button>`}
+      `;
+      if (!alreadyJoined) {
+        card.querySelector('.invite-btn').addEventListener('click', () => joinGroup(m));
+      }
+      wrap.appendChild(card);
+      return;
+    }
+
     const row   = document.createElement('div');
     row.className = 'msg-row ' + (m.sent ? 'sent' : 'received');
-
     const bwrap = document.createElement('div');
     bwrap.className = 'bubble-wrap';
 
+    // Sender name above bubble in group chats
+    if (type === 'group' && !m.sent && m.senderName) {
+      const nameLabel = document.createElement('div');
+      nameLabel.className = 'sender-name';
+      nameLabel.textContent = m.senderName;
+      nameLabel.style.color = `hsl(${hashColor(m.senderCode || '')}, 65%, 55%)`;
+      bwrap.appendChild(nameLabel);
+    }
+
     const bubble = document.createElement('div');
+
     if (m.type === 'sticker') {
       bubble.className = 'bubble sticker-bubble';
       bubble.innerHTML = `<img src="${m.text}" alt="sticker">`;
-    } else if (m.type === 'image' || isImageUrl(m.text)) {
+    } else if (m.type === 'image') {
+      if (m.expired || !m.text) {
+        bubble.className = 'bubble';
+        bubble.innerHTML = '<span style="opacity:0.5;font-size:13px">🖼 Image expired</span>';
+      } else {
+        bubble.className = 'bubble image-bubble';
+        const imgSrc = m.text;
+        bubble.innerHTML = `<img src="${imgSrc}" alt="image" onerror="this.parentElement.innerHTML='🖼 Image failed to load'">`;
+        bubble.querySelector('img').addEventListener('click', () => openLightbox(imgSrc));
+      }
+    } else if (isImageUrl(m.text)) {
       bubble.className = 'bubble image-bubble';
-      bubble.innerHTML = `<img src="${m.text}" alt="image" onclick="window.open('${m.text}','_blank')" onerror="this.parentElement.innerHTML='🖼 Image (failed to load)'">`;
+      const imgSrc = m.text;
+      bubble.innerHTML = `<img src="${imgSrc}" alt="image" onerror="this.parentElement.innerHTML='🖼 Image failed to load'">`;
+      bubble.querySelector('img').addEventListener('click', () => openLightbox(imgSrc));
     } else {
       bubble.className = 'bubble';
       bubble.innerHTML = escHtml(m.text);
@@ -159,30 +412,34 @@ function renderMessages(code) {
       const badge = document.createElement('div');
       badge.className = 'reaction-badge';
       badge.textContent = m.reaction;
-      badge.title = 'Click to remove';
-      badge.addEventListener('click', () => { m.reaction = null; saveChats(); renderMessages(code); });
+      badge.addEventListener('click', () => { m.reaction = null; saveChats(); renderMessages(code, type); });
       bwrap.appendChild(badge);
     }
 
     bwrap.insertBefore(bubble, bwrap.firstChild);
     row.appendChild(bwrap);
 
-    // Long press / right-click for reactions
     let pressTimer;
-    bubble.addEventListener('mousedown',   () => { pressTimer = setTimeout(() => showReactionPicker(row, bwrap, m, code), 500); });
+    bubble.addEventListener('mousedown',   () => { pressTimer = setTimeout(() => showReactionPicker(row, bwrap, m, code, type), 500); });
     bubble.addEventListener('mouseup',     () => clearTimeout(pressTimer));
     bubble.addEventListener('mouseleave',  () => clearTimeout(pressTimer));
-    bubble.addEventListener('touchstart',  () => { pressTimer = setTimeout(() => showReactionPicker(row, bwrap, m, code), 500); }, { passive: true });
+    bubble.addEventListener('touchstart',  () => { pressTimer = setTimeout(() => showReactionPicker(row, bwrap, m, code, type), 500); }, { passive: true });
     bubble.addEventListener('touchend',    () => clearTimeout(pressTimer));
-    bubble.addEventListener('contextmenu', e  => { e.preventDefault(); showReactionPicker(row, bwrap, m, code); });
+    bubble.addEventListener('contextmenu', e  => { e.preventDefault(); showReactionPicker(row, bwrap, m, code, type); });
 
     wrap.appendChild(row);
   });
+
   wrap.scrollTop = wrap.scrollHeight;
 }
 
+function hashColor(str) {
+  let n = 0; for (const c of str) n += c.charCodeAt(0);
+  return (n * 47) % 360;
+}
+
 // ─── REACTION PICKER ──────────────────────────────────────────────────────────
-function showReactionPicker(row, bwrap, msg, code) {
+function showReactionPicker(row, bwrap, msg, code, type) {
   document.querySelectorAll('.reaction-picker').forEach(p => p.remove());
   const picker = document.createElement('div');
   picker.className = 'reaction-picker';
@@ -191,7 +448,7 @@ function showReactionPicker(row, bwrap, msg, code) {
     span.textContent = r;
     span.addEventListener('click', () => {
       msg.reaction = msg.reaction === r ? null : r;
-      saveChats(); renderMessages(code); picker.remove();
+      saveChats(); renderMessages(code, type); picker.remove();
     });
     picker.appendChild(span);
   });
@@ -209,34 +466,103 @@ function addMessageToChat(code, msg) {
   chats[code].push(msg);
   enforceStorageLimit(code);
   saveChats();
-  if (code === activeCode) renderMessages(code);
+  if (code === activeCode) renderMessages(code, activeType);
   renderContacts(document.getElementById('search').value);
 }
 
-// ─── SEND TEXT ────────────────────────────────────────────────────────────────
+// ─── SEND TEXT / IMAGE ────────────────────────────────────────────────────────
 async function sendMessage() {
   const input = document.getElementById('msg-input');
   const text  = input.value.trim();
   if (!text || !activeCode) return;
   const type = isImageUrl(text) ? 'image' : 'text';
-  addMessageToChat(activeCode, { text, time: Date.now(), sent: true, read: true, type });
+
+  if (activeType === 'group') {
+    await sendGroupMessage(text, type);
+  } else {
+    addMessageToChat(activeCode, { text, time: Date.now(), sent: true, read: true, type });
+    await pushToSupabase(activeCode, text, type);
+  }
+
   input.value = ''; input.style.height = 'auto';
   document.getElementById('send-btn').disabled = true;
-  await pushToSupabase(activeCode, text, type);
 }
 
-// ─── SEND STICKER ─────────────────────────────────────────────────────────────
-function sendSticker(s) {
-  if (!activeCode) return;
-  addMessageToChat(activeCode, { text: s.url, time: Date.now(), sent: true, read: true, type: 'sticker' });
-  closeAllPanels();
-  pushToSupabase(activeCode, s.url, 'sticker');
+// ─── GROUP MESSAGING ──────────────────────────────────────────────────────────
+async function sendGroupMessage(text, type = 'text', extraData = {}) {
+  const group = groups.find(g => g.id === activeCode);
+  if (!group) return;
+
+  const msg = { text, time: Date.now(), sent: true, read: true, type,
+    senderCode: myCode, senderName: myName || 'Me', ...extraData };
+  addMessageToChat(activeCode, msg);
+
+  // Send to each member individually
+  const promises = group.members
+    .filter(m => m.code !== myCode)
+    .map(member => pushToSupabase(member.code, text, type, {
+      groupId: group.id, senderCode: myCode, senderName: myName || 'Me', ...extraData
+    }));
+  await Promise.all(promises);
+}
+
+// ─── CREATE GROUP ─────────────────────────────────────────────────────────────
+async function createGroup(name, memberCodes) {
+  const groupId = 'grp_' + generateCode();
+  const members = [
+    { code: myCode, name: myName || 'Me' },
+    ...memberCodes.map(code => {
+      const c = contacts.find(c => c.code === code);
+      return { code, name: c?.name || code };
+    })
+  ];
+
+  const group = { id: groupId, name, members, createdBy: myCode };
+  groups.push(group);
+  saveGroups();
+
+  // Send invite to each member
+  const invitePayload = JSON.stringify({
+    groupId, groupName: name,
+    invitedByName: myName || 'Me',
+    members
+  });
+
+  const promises = memberCodes.map(code =>
+    pushToSupabase(code, invitePayload, 'group_invite')
+  );
+  await Promise.all(promises);
+
+  openGroup(groupId);
+  toast(`Group "${name}" created`);
+}
+
+// ─── JOIN GROUP ───────────────────────────────────────────────────────────────
+function joinGroup(invite) {
+  // Check not already a member
+  if (groups.find(g => g.id === invite.groupId)) {
+    toast('Already in this group'); return;
+  }
+  const group = {
+    id: invite.groupId,
+    name: invite.groupName,
+    members: invite.members || [],
+    createdBy: invite.invitedByCode || ''
+  };
+  // Add self if not already in members
+  if (!group.members.find(m => m.code === myCode)) {
+    group.members.push({ code: myCode, name: myName || 'Me' });
+  }
+  groups.push(group);
+  saveGroups();
+  renderContacts(document.getElementById('search').value);
+  openGroup(invite.groupId);
+  toast(`Joined "${invite.groupName}"`);
 }
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
-async function pushToSupabase(toCode, text, type = 'text') {
+async function pushToSupabase(toCode, text, type = 'text', extra = {}) {
   try {
-    // Check server load first
     const check = await fetch(
       `${SUPABASE_URL}/rest/v1/${TABLE}?select=id&limit=1`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'count=exact' } }
@@ -244,10 +570,11 @@ async function pushToSupabase(toCode, text, type = 'text') {
     const count = parseInt(check.headers.get('content-range')?.split('/')[1] || '0');
     if (count > SERVER_LIMIT) { toast('Server busy — try again shortly'); return; }
 
+    const payload = { from: myCode, to: toCode, text, type, created_at: new Date().toISOString(), ...extra };
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ from: myCode, to: toCode, text, type, created_at: new Date().toISOString() })
+      body: JSON.stringify(payload)
     });
     if (!res.ok) toast('Failed to send');
   } catch(e) { toast('Failed to send — check connection'); }
@@ -263,12 +590,54 @@ async function pollMessages() {
     const rows = await res.json();
     if (!rows.length) return;
     const ids = [];
+
     rows.forEach(r => {
-      const sender = contacts.find(c => c.code === r.from);
-      if (!sender) { ids.push(r.id); return; }
-      addMessageToChat(r.from, { text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from === activeCode, type: r.type || 'text' });
       ids.push(r.id);
+
+      // Group message
+      if (r.groupId) {
+        const group = groups.find(g => g.id === r.groupId);
+        if (!group) return;
+        addMessageToChat(r.groupId, {
+          text: r.text, time: new Date(r.created_at).getTime(),
+          sent: false, read: r.groupId === activeCode,
+          type: r.type || 'text',
+          senderCode: r.senderCode, senderName: r.senderName
+        });
+        return;
+      }
+
+      // Group invite
+      if (r.type === 'group_invite') {
+        const sender = contacts.find(c => c.code === r.from);
+        if (!sender) return;
+        try {
+          const invite = JSON.parse(r.text);
+          invite.invitedByCode = r.from;
+          addMessageToChat(r.from, {
+            text: r.text, time: new Date(r.created_at).getTime(),
+            sent: false, read: r.from === activeCode,
+            type: 'group_invite',
+            groupId: invite.groupId,
+            groupName: invite.groupName,
+            invitedByName: invite.invitedByName,
+            invitedByCode: r.from,
+            members: invite.members
+          });
+        } catch(e) {}
+        return;
+      }
+
+      // Regular DM
+      const sender = contacts.find(c => c.code === r.from);
+      if (!sender) return;
+      addMessageToChat(r.from, {
+        text: r.text, time: new Date(r.created_at).getTime(),
+        sent: false, read: r.from === activeCode,
+        type: r.type || 'text'
+      });
     });
+
     if (ids.length) {
       await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?id=in.(${ids.join(',')})`, {
         method: 'DELETE',
@@ -292,7 +661,8 @@ async function loadStickers() {
 function buildStickerTabs() {
   const tabs = document.getElementById('sticker-tabs');
   tabs.innerHTML = '';
-  [{ id: 'favourites', name: '⭐ Favourites' }, ...stickerData].forEach(cat => {
+  const allCats = [{ id:'favourites', name:'⭐ Favourites' }, { id:'custom', name:'🖼 My Stickers' }, ...stickerData];
+  allCats.forEach(cat => {
     const tab = document.createElement('div');
     tab.className = 'sticker-tab' + (activeStickerCat === cat.id ? ' active' : '');
     tab.textContent = cat.name;
@@ -309,36 +679,81 @@ function buildStickerTabs() {
 function renderStickerGrid(catId) {
   const grid = document.getElementById('sticker-grid');
   grid.innerHTML = '';
-  const stickers = catId === 'favourites' ? favStickers : (stickerData.find(c => c.id === catId)?.stickers || []);
+  const createBtn = document.getElementById('create-sticker-btn');
+  createBtn.style.display = catId === 'custom' ? 'flex' : 'none';
+
+  let stickers = [];
+  if (catId === 'favourites') stickers = favStickers;
+  else if (catId === 'custom') stickers = customStickers;
+  else stickers = stickerData.find(c => c.id === catId)?.stickers || [];
+
   if (!stickers.length) {
-    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:#8e8e93;font-size:13px;padding:24px">
-      ${catId === 'favourites' ? 'Hover a sticker and click ★ to favourite it' : 'No stickers'}
-    </div>`;
+    const msg = catId === 'favourites' ? 'Hover a sticker and click ★ to favourite it'
+              : catId === 'custom'     ? 'Tap "+ Create" to make your own stickers'
+              : 'No stickers';
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:#8e8e93;font-size:13px;padding:24px">${msg}</div>`;
     return;
   }
+
   stickers.forEach(s => {
     const item = document.createElement('div');
     item.className = 'sticker-item';
     const isFav = favStickers.some(f => f.id === s.id);
-    item.innerHTML = `
-      <img src="${s.url}" alt="${s.name}" loading="lazy">
-      <button class="sticker-fav-btn ${isFav ? 'active' : ''}" title="${isFav ? 'Remove' : 'Favourite'}">★</button>`;
-    item.querySelector('img').addEventListener('click', () => sendSticker(s));
-    item.querySelector('.sticker-fav-btn').addEventListener('click', e => {
-      e.stopPropagation();
-      const idx = favStickers.findIndex(f => f.id === s.id);
-      if (idx === -1) { favStickers.push(s); toast(`${s.name} added to favourites`); }
-      else { favStickers.splice(idx, 1); toast('Removed from favourites'); }
-      saveFavStickers();
-      renderStickerGrid(activeStickerCat);
-    });
+
+    if (catId === 'custom') {
+      item.innerHTML = `<img src="${s.url}" alt="${s.name}" loading="lazy">
+        <button class="sticker-fav-btn active" title="Delete" style="color:#ff453a">✕</button>`;
+      item.querySelector('img').addEventListener('click', () => sendStickerMsg(s));
+      item.querySelector('.sticker-fav-btn').addEventListener('click', e => {
+        e.stopPropagation();
+        customStickers = customStickers.filter(cs => cs.id !== s.id);
+        favStickers    = favStickers.filter(f => f.id !== s.id);
+        saveCustomStickers(); saveFavStickers();
+        renderStickerGrid('custom');
+        toast('Sticker deleted');
+      });
+    } else {
+      item.innerHTML = `<img src="${s.url}" alt="${s.name}" loading="lazy">
+        <button class="sticker-fav-btn ${isFav ? 'active' : ''}" title="${isFav ? 'Remove':'Favourite'}">★</button>`;
+      item.querySelector('img').addEventListener('click', () => sendStickerMsg(s));
+      item.querySelector('.sticker-fav-btn').addEventListener('click', e => {
+        e.stopPropagation();
+        const idx = favStickers.findIndex(f => f.id === s.id);
+        if (idx === -1) { favStickers.push(s); toast(`${s.name} added to favourites`); }
+        else { favStickers.splice(idx, 1); toast('Removed from favourites'); }
+        saveFavStickers();
+        renderStickerGrid(activeStickerCat);
+      });
+    }
     grid.appendChild(item);
   });
 }
 
+function sendStickerMsg(s) {
+  if (!activeCode) return;
+  if (activeType === 'group') {
+    sendGroupMessage(s.url, 'sticker');
+  } else {
+    addMessageToChat(activeCode, { text: s.url, time: Date.now(), sent: true, read: true, type: 'sticker' });
+    pushToSupabase(activeCode, s.url, 'sticker');
+  }
+  closeAllPanels();
+}
+
+// ─── LIGHTBOX ─────────────────────────────────────────────────────────────────
+function openLightbox(src) {
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+  document.getElementById('lightbox-img').src = '';
+  document.body.style.overflow = '';
+}
+
 // ─── PANELS ───────────────────────────────────────────────────────────────────
 function closeAllPanels() {
-  document.getElementById('image-panel').classList.remove('open');
   document.getElementById('sticker-panel').classList.remove('open');
 }
 
@@ -352,33 +767,117 @@ function enforceStorageLimit(code) {
 }
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
-function isImageUrl(url) { return /\.(jpg|jpeg|png|gif|webp|svg|avif)(\?.*)?$/i.test(url.trim()); }
-
+function isImageUrl(url) {
+  if (!url) return false;
+  return /\.(jpg|jpeg|png|gif|webp|svg|avif)(\?.*)?$/i.test(url.trim());
+}
 function formatTime(ts) {
   const d = new Date(ts), now = new Date(), diff = now - d;
   if (diff < 60000) return 'now';
   if (diff < 3600000) return Math.floor(diff / 60000) + 'm';
-  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  return d.toLocaleDateString([], { month:'short', day:'numeric' });
 }
-
 function formatDateLabel(d) {
   const now = new Date();
   if (d.toDateString() === now.toDateString()) return 'Today';
   const y = new Date(now); y.setDate(y.getDate() - 1);
   if (d.toDateString() === y.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+  return d.toLocaleDateString([], { weekday:'long', month:'long', day:'numeric' });
 }
-
-function escHtml(t) { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
-
+function escHtml(t) {
+  if (!t) return '';
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg; el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), 2200);
 }
 
+// ─── RENAME / DELETE HELPERS ──────────────────────────────────────────────────
+function showRenameModal(contact) {
+  document.getElementById('rename-input').value = contact.name;
+  document.getElementById('rename-modal').classList.add('open');
+  document.getElementById('rename-input').focus();
+  document.getElementById('rename-confirm').onclick = () => {
+    const newName = document.getElementById('rename-input').value.trim();
+    if (!newName) { toast('Name cannot be empty'); return; }
+    contact.name = newName;
+    saveContacts();
+    renderContacts(document.getElementById('search').value);
+    if (activeCode === contact.code) {
+      document.getElementById('chat-header-name').textContent = newName;
+      document.getElementById('chat-avatar').textContent = avatarLetter(newName);
+    }
+    document.getElementById('rename-modal').classList.remove('open');
+    toast('Contact renamed');
+  };
+}
+
 // ─── EVENT LISTENERS ──────────────────────────────────────────────────────────
+// Lightbox
+document.getElementById('lightbox').addEventListener('click', e => { if (e.target === document.getElementById('lightbox')) closeLightbox(); });
+document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+// Edit mode
+document.getElementById('edit-btn').addEventListener('click', toggleEditMode);
+
+document.getElementById('edit-mark-read').addEventListener('click', () => {
+  selectedContacts.forEach(id => {
+    if (chats[id]) chats[id].forEach(m => { if (!m.sent) m.read = true; });
+  });
+  saveChats(); selectedContacts.clear();
+  renderContacts(document.getElementById('search').value);
+  updateEditActions(); toast('Marked as read');
+});
+
+document.getElementById('edit-rename').addEventListener('click', () => {
+  const code = [...selectedContacts][0];
+  const contact = contacts.find(c => c.code === code);
+  if (contact) showRenameModal(contact);
+});
+
+document.getElementById('edit-delete').addEventListener('click', () => {
+  const ids = [...selectedContacts];
+  const names = ids.map(id => {
+    const c = contacts.find(c => c.code === id);
+    const g = groups.find(g => g.id === id);
+    return c?.name || g?.name;
+  }).filter(Boolean);
+  document.getElementById('delete-name').textContent = names.join(', ');
+  document.getElementById('delete-modal').classList.add('open');
+  document.getElementById('delete-confirm').onclick = () => {
+    ids.forEach(id => {
+      contacts = contacts.filter(c => c.code !== id);
+      groups   = groups.filter(g => g.id !== id);
+      delete chats[id];
+      if (ls('lastChat') === id) { ls('lastChat',''); ls('lastType','dm'); }
+      if (activeCode === id) {
+        activeCode = null;
+        document.getElementById('empty-state').style.display = 'flex';
+        document.getElementById('chat-main').style.display = 'none';
+        if (isMobile()) showSidebar();
+      }
+    });
+    saveContacts(); saveGroups(); saveChats();
+    selectedContacts.clear();
+    renderContacts(document.getElementById('search').value);
+    updateEditActions();
+    document.getElementById('delete-modal').classList.remove('open');
+    toggleEditMode();
+    toast(`Deleted ${names.length} item${names.length > 1 ? 's' : ''}`);
+  };
+});
+
+document.getElementById('rename-cancel').addEventListener('click', () => document.getElementById('rename-modal').classList.remove('open'));
+document.getElementById('rename-modal').addEventListener('click', e => { if (e.target === document.getElementById('rename-modal')) document.getElementById('rename-modal').classList.remove('open'); });
+document.getElementById('rename-input').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('rename-confirm').click(); });
+document.getElementById('delete-cancel').addEventListener('click', () => document.getElementById('delete-modal').classList.remove('open'));
+document.getElementById('delete-modal').addEventListener('click', e => { if (e.target === document.getElementById('delete-modal')) document.getElementById('delete-modal').classList.remove('open'); });
+
+// New contact
 document.getElementById('new-contact-btn').addEventListener('click', () => {
   document.getElementById('contact-name-input').value = '';
   document.getElementById('contact-code-input').value = '';
@@ -398,17 +897,99 @@ document.getElementById('modal-add').addEventListener('click', () => {
   toast(`${name} added`); openChat(code);
 });
 
+// New group
+document.getElementById('new-group-btn').addEventListener('click', () => {
+  // Populate member checkboxes
+  const list = document.getElementById('group-member-list');
+  list.innerHTML = '';
+  if (!contacts.length) {
+    list.innerHTML = '<div style="color:#8e8e93;font-size:13px;padding:8px 0">Add contacts first</div>';
+  } else {
+    contacts.forEach(c => {
+      const row = document.createElement('label');
+      row.className = 'member-checkbox-row';
+      row.innerHTML = `
+        <input type="checkbox" value="${c.code}">
+        <div class="avatar ${avatarColor(c.code)}" style="width:32px;height:32px;font-size:13px">${avatarLetter(c.name)}</div>
+        <span>${c.name}</span>`;
+      list.appendChild(row);
+    });
+  }
+  document.getElementById('group-name-input').value = '';
+  document.getElementById('group-modal').classList.add('open');
+  document.getElementById('group-name-input').focus();
+});
+document.getElementById('group-modal-cancel').addEventListener('click', () => document.getElementById('group-modal').classList.remove('open'));
+document.getElementById('group-modal').addEventListener('click', e => { if (e.target === document.getElementById('group-modal')) document.getElementById('group-modal').classList.remove('open'); });
+document.getElementById('group-modal-create').addEventListener('click', async () => {
+  const name = document.getElementById('group-name-input').value.trim();
+  if (!name) { toast('Enter a group name'); return; }
+  const checked = [...document.querySelectorAll('#group-member-list input:checked')].map(i => i.value);
+  if (!checked.length) { toast('Select at least one member'); return; }
+
+  // Ask for display name if not set
+  if (!myName) {
+    const n = prompt('What should group members see as your name?');
+    if (!n) return;
+    myName = n.trim();
+    ls('myName', myName);
+  }
+
+  document.getElementById('group-modal').classList.remove('open');
+  await createGroup(name, checked);
+});
+
+// Search
 document.getElementById('search').addEventListener('input', e => renderContacts(e.target.value));
+
+// My code bar
 document.getElementById('my-code-bar').addEventListener('click', () => {
   navigator.clipboard?.writeText(myCode).then(() => toast('Code copied!')).catch(() => toast('Your code: ' + myCode));
 });
+
 document.getElementById('back-btn').addEventListener('click', showSidebar);
 
+// Image
 document.getElementById('image-btn').addEventListener('click', () => {
-  const ip = document.getElementById('image-panel');
-  const wasOpen = ip.classList.contains('open');
   closeAllPanels();
-  if (!wasOpen) { ip.classList.add('open'); document.getElementById('image-url-input').focus(); }
+  document.getElementById('image-file-input').click();
+});
+document.getElementById('image-file-input').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || !activeCode) return;
+  toast('Compressing...');
+  try {
+    const base64 = await compressImage(file);
+    const sizeKB = Math.round((base64.length * 3 / 4) / 1024);
+    if (activeType === 'group') {
+      await sendGroupMessage(base64, 'image');
+    } else {
+      addMessageToChat(activeCode, { text: base64, time: Date.now(), sent: true, read: true, type: 'image' });
+      await pushToSupabase(activeCode, base64, 'image');
+    }
+    toast(`Sent · ${sizeKB}KB`);
+  } catch(err) { toast('Failed to compress image'); }
+});
+
+// Stickers
+document.getElementById('create-sticker-btn').addEventListener('click', () => document.getElementById('sticker-file-input').click());
+document.getElementById('sticker-file-input').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  toast('Creating sticker...');
+  try {
+    const base64 = await compressSticker(file);
+    const sizeKB = Math.round((base64.length * 3 / 4) / 1024);
+    const sticker = { id: 'cs_' + Date.now(), name: 'My Sticker', url: base64 };
+    customStickers.push(sticker);
+    saveCustomStickers();
+    activeStickerCat = 'custom';
+    document.querySelectorAll('.sticker-tab').forEach(t => t.classList.toggle('active', t.dataset.cat === 'custom'));
+    renderStickerGrid('custom');
+    toast(`Sticker created · ${sizeKB}KB`);
+  } catch(err) { toast('Failed to create sticker'); }
 });
 
 document.getElementById('sticker-btn').addEventListener('click', () => {
@@ -418,24 +999,11 @@ document.getElementById('sticker-btn').addEventListener('click', () => {
   if (!wasOpen) sp.classList.add('open');
 });
 
-document.getElementById('image-send-btn').addEventListener('click', () => {
-  const url = document.getElementById('image-url-input').value.trim();
-  if (!url) { toast('Paste an image URL first'); return; }
-  if (!activeCode) return;
-  addMessageToChat(activeCode, { text: url, time: Date.now(), sent: true, read: true, type: 'image' });
-  document.getElementById('image-url-input').value = '';
-  closeAllPanels();
-  pushToSupabase(activeCode, url, 'image');
-});
-
-document.getElementById('image-url-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('image-send-btn').click();
-});
-
 document.addEventListener('click', e => {
   if (!e.target.closest('#input-area')) closeAllPanels();
 });
 
+// Msg input
 const msgInput = document.getElementById('msg-input');
 const sendBtn  = document.getElementById('send-btn');
 msgInput.addEventListener('input', () => {
