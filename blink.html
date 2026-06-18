@@ -130,6 +130,20 @@
       </label>
     </div>
     <p class="settings-note">Changing your username will notify all your contacts automatically.</p>
+    <button class="settings-action-btn danger" id="settings-remove-account" style="margin-top:8px;">Remove Account</button>
+  </div>
+</div>
+
+<!-- REMOVE ACCOUNT WARNING MODAL -->
+<div class="modal-overlay" id="remove-account-modal">
+  <div class="modal">
+    <h2 style="color:#ff453a;">⚠️ Remove Account</h2>
+    <p style="color:#8e8e93;font-size:14px;line-height:1.6;">This will permanently delete your username and erase all your messages, contacts, and data from this device. This cannot be undone.</p>
+    <div id="remove-account-countdown" style="text-align:center;font-size:28px;font-weight:700;color:#ff453a;padding:8px 0;">3</div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="remove-account-cancel">Cancel</button>
+      <button class="btn-delete" id="remove-account-confirm" disabled style="opacity:0.4;">Delete Everything</button>
+    </div>
   </div>
 </div>
 
