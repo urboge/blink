@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Blink</title>
 <link rel="stylesheet" href="blink.css">
 </head>
@@ -96,7 +96,8 @@
 
   </div><!-- /sidebar -->
 
-  <!-- Settings panel — outside sidebar so overflow:hidden doesn't clip it -->
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay" id="settings-overlay">
   <div id="settings-panel">
     <div id="settings-header">
       <span>Settings</span>
@@ -130,6 +131,7 @@
     </div>
     <p class="settings-note">Changing your username will notify all your contacts automatically.</p>
   </div>
+</div>
 
   <!-- CHAT AREA -->
   <div id="chat-area">
