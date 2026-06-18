@@ -257,6 +257,17 @@ body {
 #lightbox-close:hover { background: rgba(255,255,255,0.25); }
 #lightbox-close svg { width: 20px; height: 20px; }
 
+/* MESSAGE TIME + SEEN */
+.msg-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 3px; padding: 0 2px;
+  min-width: 60px;
+}
+.msg-row.sent .msg-meta  { flex-direction: row; }
+.msg-row.received .msg-meta { flex-direction: row; }
+.msg-time-label { font-size: 10px; color: var(--text-secondary); margin-left: auto; }
+.msg-seen { font-size: 10px; color: var(--text-secondary); margin-right: auto; }
+
 /* TOAST */
 #toast { position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%) translateY(20px); background: #3a3a3c; color: #fff; padding: 10px 20px; border-radius: 20px; font-size: 14px; opacity: 0; transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 200; }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -393,8 +404,10 @@ body {
 .settings-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-top: 1px solid var(--divider); }
 .settings-label { font-size: 14px; color: var(--text-secondary); }
 .settings-val { font-size: 14px; font-weight: 600; }
-.settings-action-btn { width: 100%; padding: 12px; background: #2563eb; border: none; border-radius: 12px; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; margin-top: 12px; transition: background 0.15s; }
+.settings-action-btn { width: 100%; padding: 12px; background: #2563eb; border: none; border-radius: 12px; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; margin-top: 12px; transition: background 0.15s; touch-action: manipulation; }
 .settings-action-btn:hover { background: #1d4ed8; }
+.settings-action-btn.danger { background: rgba(255,69,58,0.15); color: #ff453a; }
+.settings-action-btn.danger:hover { background: rgba(255,69,58,0.25); }
 .settings-note { font-size: 12px; color: var(--text-secondary); margin-top: 10px; line-height: 1.5; text-align: center; }
 
 /* AVATAR WITH PICTURE */
