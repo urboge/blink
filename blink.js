@@ -96,7 +96,39 @@ async function compressImage(file, maxBytes = MAX_IMAGE_BYTES, maxDim = 1200, st
   });
 }
 
-// ─── INIT ─────────────────────────────────────────────────────────────────────
+// ─── USERNAME REGISTRY ────────────────────────────────────────────────────────
+async function isUsernameTaken(username) {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/usernames?username=eq.${encodeURIComponent(username)}&select=username`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) return false; // if table doesn't exist yet, allow
+    const rows = await res.json();
+    return rows.length > 0;
+  } catch(e) { return false; }
+}
+
+async function registerUsername(username) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/usernames`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ username })
+    });
+  } catch(e) {}
+}
+
+async function releaseUsername(username) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/usernames?username=eq.${encodeURIComponent(username)}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+  } catch(e) {}
+}
+
+
 async function init() {
   myUsername = ls('myUsername') || '';
   const oldCode = ls('myCode');
@@ -797,7 +829,19 @@ document.getElementById('welcome-btn').addEventListener('click', async () => {
     document.getElementById('welcome-hint').textContent = 'Letters, numbers and _ only. No spaces.';
     return;
   }
+  const btn = document.getElementById('welcome-btn');
+  btn.textContent = 'Checking...';
+  btn.disabled = true;
+  const taken = await isUsernameTaken(val);
+  if (taken) {
+    btn.textContent = 'Get Started';
+    btn.disabled = false;
+    document.getElementById('welcome-hint').style.color = '#ff453a';
+    document.getElementById('welcome-hint').textContent = '@' + val + ' is already taken — try another.';
+    return;
+  }
   await setUsername(val, true);
+  await registerUsername(val);
   document.getElementById('welcome-screen').style.display = 'none';
   startApp();
 });
@@ -859,7 +903,20 @@ document.getElementById('username-confirm').addEventListener('click', async () =
   const val = document.getElementById('username-input').value.trim();
   if (!validateUsername(val)) { toast('Invalid — letters, numbers and _ only'); return; }
   if (val===myUsername) { document.getElementById('username-modal').classList.remove('open'); return; }
+
+  const btn = document.getElementById('username-confirm');
+  btn.textContent = 'Checking...';
+  btn.disabled = true;
+  const taken = await isUsernameTaken(val);
+  btn.textContent = 'Save';
+  btn.disabled = false;
+
+  if (taken) { toast('@' + val + ' is already taken'); return; }
+
+  const oldUsername = myUsername;
   document.getElementById('username-modal').classList.remove('open');
+  await releaseUsername(oldUsername);
+  await registerUsername(val);
   await setUsername(val, false);
   toast('Username updated — reshare your new @' + val);
 });
