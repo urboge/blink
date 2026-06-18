@@ -399,6 +399,9 @@ function openChat(code) {
   renderMessages(code, 'dm');
   renderContacts(document.getElementById('search').value);
   showChat();
+
+  // Send read receipt to the other person
+  pushToSupabase(code, myUsername, 'read_receipt');
 }
 
 // ─── OPEN GROUP ───────────────────────────────────────────────────────────────
@@ -498,6 +501,17 @@ function renderMessages(code, type = 'dm') {
       bwrap.appendChild(badge);
     }
     bwrap.insertBefore(bubble, bwrap.firstChild);
+
+    // Time + seen — seen left, time right
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    if (m.sent) {
+      meta.innerHTML = `<span class="msg-seen">${m.seen ? 'Seen' : ''}</span><span class="msg-time-label">${formatTimestamp(m.time)}</span>`;
+    } else {
+      meta.innerHTML = `<span class="msg-time-label">${formatTimestamp(m.time)}</span>`;
+    }
+    bwrap.appendChild(meta);
+
     row.appendChild(bwrap);
     let pressTimer;
     const startPress = () => { pressTimer = setTimeout(() => showReactionPicker(row, bwrap, m, code, type), 600); };
@@ -543,7 +557,7 @@ function addMessageToChat(code, msg) {
   saveChats();
   if (code === activeCode) renderMessages(code, activeType);
   renderContacts(document.getElementById('search').value);
-  if (!msg.sent && msg.type !== 'system' && msg.type !== 'code_change' && msg.type !== 'avatar_update') {
+  if (!msg.sent && msg.type !== 'system' && msg.type !== 'code_change' && msg.type !== 'avatar_update' && msg.type !== 'read_receipt') {
     const isGroup  = groups.find(g => g.id === code);
     const contact  = contacts.find(c => c.code === code);
     const sender   = msg.senderName || contact?.name || code;
@@ -629,6 +643,21 @@ async function pollMessages() {
     const ids = [];
     rows.forEach(r => {
       ids.push(r.id);
+
+      // ── Read receipt ──
+      if (r.type === 'read_receipt') {
+        if (chats[r.from]) {
+          // Clear all seen flags first, then mark only the last sent message
+          chats[r.from].forEach(m => { m.seen = false; });
+          const lastSent = [...chats[r.from]].reverse().find(m => m.sent);
+          if (lastSent) lastSent.seen = true;
+          saveChats();
+          if (activeCode === r.from) renderMessages(r.from, activeType);
+          renderContacts(document.getElementById('search').value);
+        }
+        return;
+      }
+
       if (r.type === 'avatar_update') {
         try {
           const { username, avatar } = JSON.parse(r.text);
@@ -782,6 +811,12 @@ function enforceStorageLimit(code) {
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 function isImageUrl(url) { if(!url) return false; return /\.(jpg|jpeg|png|gif|webp|svg|avif)(\?.*)?$/i.test(url.trim()); }
+
+function formatTimestamp(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 function formatTime(ts) {
   const d=new Date(ts),now=new Date(),diff=now-d;
   if(diff<60000) return 'now';
@@ -867,6 +902,45 @@ document.getElementById('avatar-file-input').addEventListener('change', async e 
 document.getElementById('settings-remove-avatar').addEventListener('click', () => {
   removeProfilePicture();
   document.getElementById('settings-overlay').classList.remove('open');
+});
+
+// Remove account
+document.getElementById('settings-remove-account').addEventListener('click', () => {
+  document.getElementById('settings-overlay').classList.remove('open');
+  const countdown  = document.getElementById('remove-account-countdown');
+  const confirmBtn = document.getElementById('remove-account-confirm');
+  countdown.textContent = '3';
+  confirmBtn.disabled = true;
+  confirmBtn.style.opacity = '0.4';
+  document.getElementById('remove-account-modal').classList.add('open');
+  let secs = 3;
+  const timer = setInterval(() => {
+    secs--;
+    if (secs <= 0) {
+      clearInterval(timer);
+      countdown.textContent = '';
+      confirmBtn.disabled = false;
+      confirmBtn.style.opacity = '1';
+    } else {
+      countdown.textContent = secs;
+    }
+  }, 1000);
+  document.getElementById('remove-account-modal')._timer = timer;
+});
+document.getElementById('remove-account-cancel').addEventListener('click', () => {
+  clearInterval(document.getElementById('remove-account-modal')._timer);
+  document.getElementById('remove-account-modal').classList.remove('open');
+});
+document.getElementById('remove-account-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('remove-account-modal')) {
+    clearInterval(document.getElementById('remove-account-modal')._timer);
+    document.getElementById('remove-account-modal').classList.remove('open');
+  }
+});
+document.getElementById('remove-account-confirm').addEventListener('click', async () => {
+  await releaseUsername(myUsername);
+  localStorage.clear();
+  window.location.reload();
 });
 
 document.getElementById('settings-btn').addEventListener('click', () => {
