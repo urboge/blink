@@ -400,8 +400,10 @@ function openChat(code) {
   renderContacts(document.getElementById('search').value);
   showChat();
 
-  // Send read receipt to the other person
-  pushToSupabase(code, myUsername, 'read_receipt');
+  // Send read receipt only if this is a known contact
+  if (contacts.find(c => c.code === code)) {
+    pushToSupabase(code, '__read__', 'read_receipt');
+  }
 }
 
 // ─── OPEN GROUP ───────────────────────────────────────────────────────────────
@@ -432,7 +434,7 @@ function openGroup(groupId) {
 function renderMessages(code, type = 'dm') {
   const wrap = document.getElementById('messages-wrap');
   wrap.innerHTML = '';
-  const msgs = chats[code] || [];
+  const msgs = (chats[code] || []).filter(m => m.text !== '__read__' && m.text !== '');
   let lastDate = null;
   msgs.forEach(m => {
     const d = new Date(m.time);
@@ -557,6 +559,16 @@ function addMessageToChat(code, msg) {
   saveChats();
   if (code === activeCode) renderMessages(code, activeType);
   renderContacts(document.getElementById('search').value);
+
+  // Send read receipt if message arrives while chat is already open and visible
+  if (!msg.sent && ['text','image','sticker'].includes(msg.type)) {
+    if (code === activeCode && activeType === 'dm' && document.hasFocus()) {
+      if (contacts.find(c => c.code === code)) {
+        pushToSupabase(code, '__read__', 'read_receipt');
+      }
+    }
+  }
+
   if (!msg.sent && msg.type !== 'system' && msg.type !== 'code_change' && msg.type !== 'avatar_update' && msg.type !== 'read_receipt') {
     const isGroup  = groups.find(g => g.id === code);
     const contact  = contacts.find(c => c.code === code);
@@ -696,6 +708,10 @@ async function pollMessages() {
         } catch(e) {}
         return;
       }
+      // ── Regular DM fallback ──
+      const silentTypes = ['read_receipt','code_change','avatar_update','username_update'];
+      if (silentTypes.includes(r.type)) return;
+      if (!r.text) return; // ignore empty messages
       ensureContact(r.from);
       addMessageToChat(r.from, { text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text' });
     });
