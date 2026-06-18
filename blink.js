@@ -1116,7 +1116,14 @@ document.getElementById('sticker-btn').addEventListener('click', () => {
   const wasOpen = sp.classList.contains('open');
   closeAllPanels(); if (!wasOpen) sp.classList.add('open');
 });
-document.addEventListener('click', e => { if (!e.target.closest('#input-area')) closeAllPanels(); });
+document.addEventListener('click', e => { 
+  // If the tap is inside the input area, settings button, or settings panel, do nothing.
+  if (e.target.closest('#input-area') || e.target.closest('#settings-btn') || e.target.closest('#settings-panel')) {
+    return; 
+  }
+  closeAllPanels(); 
+});
+
 
 // Msg input
 const msgInput = document.getElementById('msg-input');
