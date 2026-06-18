@@ -825,11 +825,10 @@ document.getElementById('settings-remove-avatar').addEventListener('click', () =
   document.getElementById('settings-overlay').classList.remove('open');
 });
 
-// Settings — always open on tap, never toggle
 document.getElementById('settings-btn').addEventListener('click', () => {
-  document.getElementById('settings-username-val').textContent = '@' + myUsername;
-  updateMyAvatarUI();
-  updateNotificationToggleUI();
+  try { document.getElementById('settings-username-val').textContent = '@' + myUsername; } catch(e) {}
+  try { updateMyAvatarUI(); } catch(e) {}
+  try { updateNotificationToggleUI(); } catch(e) {}
   document.getElementById('settings-overlay').classList.add('open');
 });
 document.getElementById('settings-close').addEventListener('click', () => document.getElementById('settings-overlay').classList.remove('open'));
