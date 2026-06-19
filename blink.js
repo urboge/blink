@@ -23,8 +23,24 @@ let stickerData      = [];
 let activeStickerCat = 'favourites';
 let favStickers      = [];
 let customStickers   = [];
+let stories          = {};
+let myStory          = null;
+let storyViewerQueue = [];
+let storyViewerIdx   = 0;
+let storyTimer       = null;
 let editMode         = false;
 let selectedContacts = new Set();
+
+// Voice recording state
+let mediaRecorder     = null;
+let recordedChunks    = [];
+let recordingStartTime = null;
+let recordingTimerInt = null;
+let recordedBlob      = null;
+let recordedDuration  = 0;
+let recordingStream   = null;
+let voicePreviewAudio = null;
+const MAX_VOICE_SECONDS = 60;
 
 const REACTIONS     = ['👍','❤️','😂','😮','😢','🔥'];
 const AVATAR_COLORS = ['av-blue','av-purple','av-pink','av-green','av-orange','av-teal'];
@@ -41,6 +57,11 @@ function saveGroups()         { ls('groups',         JSON.stringify(groups)); }
 function saveFavStickers()    { ls('favStickers',    JSON.stringify(favStickers)); }
 function saveCustomStickers() { ls('customStickers', JSON.stringify(customStickers)); }
 function saveAvatars()        { ls('avatars',        JSON.stringify(avatars)); }
+function saveStories()        { ls('stories',        JSON.stringify(stories)); }
+function saveMyStory()        { ls('myStory',        JSON.stringify(myStory)); }
+
+const STORY_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const MAX_STORY_BYTES = 120 * 1024;
 
 function validateUsername(name) {
   return /^[a-zA-Z0-9_]{1,24}$/.test(name);
@@ -103,12 +124,11 @@ async function isUsernameTaken(username) {
       `${SUPABASE_URL}/rest/v1/usernames?username=eq.${encodeURIComponent(username)}&select=username`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
     );
-    if (!res.ok) return false; // if table doesn't exist yet, allow
+    if (!res.ok) return false;
     const rows = await res.json();
     return rows.length > 0;
   } catch(e) { return false; }
 }
-
 async function registerUsername(username) {
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/usernames`, {
@@ -118,7 +138,6 @@ async function registerUsername(username) {
     });
   } catch(e) {}
 }
-
 async function releaseUsername(username) {
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/usernames?username=eq.${encodeURIComponent(username)}`, {
@@ -128,13 +147,12 @@ async function releaseUsername(username) {
   } catch(e) {}
 }
 
-
+// ─── INIT ─────────────────────────────────────────────────────────────────────
 async function init() {
   myUsername = ls('myUsername') || '';
   const oldCode = ls('myCode');
   if (oldCode && !myUsername) ls('myCode', '');
 
-  // Skip app animation immediately — prevents iOS tap blocking
   const appEl = document.getElementById('app');
   appEl.style.animation = 'none';
   appEl.style.opacity = '1';
@@ -155,9 +173,12 @@ async function startApp() {
   customStickers = JSON.parse(ls('customStickers') || '[]');
   avatars        = JSON.parse(ls('avatars')        || '{}');
   myAvatar       = ls('myAvatar') || '';
+  stories        = JSON.parse(ls('stories')        || '{}');
+  myStory        = JSON.parse(ls('myStory')        || 'null');
   notificationsOn = ls('notificationsOn') !== 'false';
   updateMyAvatarUI();
   cleanExpiredImages();
+  cleanExpiredStories();
   renderContacts();
   await loadStickers();
   if (SUPABASE_URL && SUPABASE_KEY) setInterval(pollMessages, POLL_INTERVAL);
@@ -250,6 +271,494 @@ function groupAvatarSVG(colorClass) {
   </svg>`;
 }
 
+// ─── STORY EDITOR ─────────────────────────────────────────────────────────────
+let editorImg        = null;
+let editorElements   = [];
+let editorDragging   = null;
+let editorActiveColor = '#ffffff';
+let editorBgOn        = false;
+let editorEditingText = null;
+
+function openStoryEditor(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    editorImg = new Image();
+    editorImg.onload = () => {
+      editorElements = [];
+      document.getElementById('story-editor').classList.add('open');
+      renderEditorCanvas();
+    };
+    editorImg.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function closeStoryEditor() {
+  document.getElementById('story-editor').classList.remove('open');
+  editorImg = null;
+  editorElements = [];
+  document.getElementById('story-editor-overlay').innerHTML = '';
+}
+
+function getEditorCanvas() { return document.getElementById('story-editor-canvas'); }
+
+function renderEditorCanvas() {
+  const canvas = getEditorCanvas();
+  const wrap = document.getElementById('story-editor-canvas-wrap');
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, w, h);
+
+  if (editorImg) {
+    const imgRatio = editorImg.width / editorImg.height;
+    const boxRatio = w / h;
+    let dw, dh, dx, dy;
+    if (imgRatio > boxRatio) { dh = h; dw = h * imgRatio; dx = (w - dw) / 2; dy = 0; }
+    else { dw = w; dh = w / imgRatio; dx = 0; dy = (h - dh) / 2; }
+    ctx.drawImage(editorImg, dx, dy, dw, dh);
+  }
+  renderEditorOverlay();
+}
+
+function renderEditorOverlay() {
+  const overlay = document.getElementById('story-editor-overlay');
+  overlay.innerHTML = '';
+  editorElements.forEach((el, idx) => {
+    const div = document.createElement('div');
+    div.className = 'editor-element';
+    div.style.left = el.x + 'px';
+    div.style.top  = el.y + 'px';
+    div.style.transform = `translate(-50%,-50%) scale(${el.scale||1}) rotate(${el.rotation||0}deg)`;
+    div.dataset.idx = idx;
+
+    if (el.type === 'text') {
+      div.innerHTML = `<span class="editor-text-el ${el.bg?'with-bg':''}" style="color:${el.color}; ${el.bg?`background:${elTextBgColor(el.color)}`:''}">${escHtml(el.text)}</span>`;
+      div.addEventListener('dblclick', () => editTextElement(idx));
+    } else if (el.type === 'sticker') {
+      div.innerHTML = `<img src="${el.url}" class="editor-sticker-el">`;
+    }
+    makeDraggable(div, el);
+    overlay.appendChild(div);
+  });
+}
+
+function elTextBgColor(color) {
+  return color === '#ffffff' ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.85)';
+}
+
+function makeDraggable(div, el) {
+  let startX, startY, origX, origY, moved = false;
+  const onStart = (clientX, clientY) => { startX = clientX; startY = clientY; origX = el.x; origY = el.y; moved = false; };
+  const onMove = (clientX, clientY) => {
+    const dx = clientX - startX, dy = clientY - startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+    el.x = origX + dx; el.y = origY + dy;
+    div.style.left = el.x + 'px'; div.style.top  = el.y + 'px';
+  };
+  div.addEventListener('mousedown', e => { e.stopPropagation(); onStart(e.clientX, e.clientY);
+    const mm = ev => onMove(ev.clientX, ev.clientY);
+    const mu = () => { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+    document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu);
+  });
+  div.addEventListener('touchstart', e => { e.stopPropagation(); const t = e.touches[0]; onStart(t.clientX, t.clientY); }, { passive: true });
+  div.addEventListener('touchmove', e => { const t = e.touches[0]; onMove(t.clientX, t.clientY); }, { passive: true });
+}
+
+function addTextElement() {
+  const text = document.getElementById('story-text-input').value.trim();
+  if (!text) { closeTextPanel(); return; }
+  if (editorEditingText !== null) {
+    editorElements[editorEditingText].text = text;
+    editorElements[editorEditingText].color = editorActiveColor;
+    editorElements[editorEditingText].bg = editorBgOn;
+  } else {
+    const wrap = document.getElementById('story-editor-canvas-wrap');
+    editorElements.push({ type: 'text', text, color: editorActiveColor, bg: editorBgOn, x: wrap.clientWidth/2, y: wrap.clientHeight/2, scale: 1, rotation: 0 });
+  }
+  closeTextPanel();
+  renderEditorOverlay();
+}
+
+function editTextElement(idx) {
+  const el = editorElements[idx];
+  editorEditingText = idx;
+  document.getElementById('story-text-input').value = el.text;
+  editorActiveColor = el.color;
+  editorBgOn = el.bg;
+  document.querySelectorAll('.story-text-color').forEach(b => b.classList.toggle('active', b.dataset.color === el.color));
+  document.getElementById('story-text-bg-toggle').classList.toggle('active', el.bg);
+  document.getElementById('story-text-panel').classList.add('open');
+  document.getElementById('story-text-input').focus();
+}
+
+function closeTextPanel() {
+  document.getElementById('story-text-panel').classList.remove('open');
+  document.getElementById('story-text-input').value = '';
+  editorEditingText = null;
+  editorBgOn = false;
+  document.getElementById('story-text-bg-toggle').classList.remove('active');
+}
+
+function openStickerPanelForStory() {
+  document.getElementById('story-sticker-panel').classList.add('open');
+  buildStoryStickerTabs();
+  renderStoryStickerGrid('favourites');
+}
+function closeStickerPanelForStory() { document.getElementById('story-sticker-panel').classList.remove('open'); }
+
+function buildStoryStickerTabs() {
+  const tabs = document.getElementById('story-sticker-tabs');
+  tabs.innerHTML = '';
+  [{ id:'favourites', name:'⭐' }, { id:'custom', name:'🖼' }, ...stickerData].forEach(cat => {
+    const tab = document.createElement('div');
+    tab.className = 'sticker-tab';
+    tab.textContent = cat.name;
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#story-sticker-tabs .sticker-tab').forEach(t=>t.classList.remove('active'));
+      tab.classList.add('active');
+      renderStoryStickerGrid(cat.id);
+    });
+    tabs.appendChild(tab);
+  });
+}
+
+function renderStoryStickerGrid(catId) {
+  const grid = document.getElementById('story-sticker-grid');
+  grid.innerHTML = '';
+  const stickers = catId==='favourites'?favStickers:catId==='custom'?customStickers:(stickerData.find(c=>c.id===catId)?.stickers||[]);
+  stickers.forEach(s => {
+    const item = document.createElement('div');
+    item.className = 'sticker-item';
+    item.innerHTML = `<img src="${s.url}" alt="${s.name}">`;
+    item.addEventListener('click', () => {
+      const wrap = document.getElementById('story-editor-canvas-wrap');
+      editorElements.push({ type:'sticker', url:s.url, x: wrap.clientWidth/2, y: wrap.clientHeight/2, scale:1, rotation:0 });
+      closeStickerPanelForStory();
+      renderEditorOverlay();
+    });
+    grid.appendChild(item);
+  });
+}
+
+async function flattenAndPost() {
+  const postBtn = document.getElementById('story-editor-post-btn');
+  postBtn.disabled = true;
+  postBtn.textContent = 'Posting...';
+
+  try {
+    const canvas = getEditorCanvas();
+    const ctx = canvas.getContext('2d');
+    renderEditorCanvas();
+
+    for (const el of editorElements) {
+      ctx.save();
+      ctx.translate(el.x, el.y);
+      ctx.rotate((el.rotation||0) * Math.PI/180);
+      ctx.scale(el.scale||1, el.scale||1);
+
+      if (el.type === 'text') {
+        ctx.font = '600 28px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const metrics = ctx.measureText(el.text);
+        const padX = 16, padY = 8;
+        if (el.bg) {
+          ctx.fillStyle = elTextBgColor(el.color);
+          const bw = metrics.width + padX*2, bh = 28 + padY*2;
+          roundRect(ctx, -bw/2, -bh/2, bw, bh, 10);
+          ctx.fill();
+        }
+        ctx.fillStyle = el.color;
+        ctx.fillText(el.text, 0, 0);
+      } else if (el.type === 'sticker') {
+        await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => { ctx.drawImage(img, -50, -50, 100, 100); resolve(); };
+          img.onerror = () => resolve();
+          img.src = el.url;
+        });
+      }
+      ctx.restore();
+    }
+
+    let dataUrl;
+    try {
+      dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    } catch (e) {
+      throw new Error('Canvas export blocked: ' + e.message);
+    }
+    if (!dataUrl || dataUrl === 'data:,') throw new Error('Canvas export produced empty result');
+
+    const blob = await (await fetch(dataUrl)).blob();
+    const file = new File([blob], 'story.jpg', { type: 'image/jpeg' });
+    closeStoryEditor();
+    toast('Posting story...');
+    await postStory(file);
+  } catch (err) {
+    console.error('Story post failed:', err);
+    toast('Failed to post story: ' + (err.message || 'unknown error'));
+  } finally {
+    postBtn.disabled = false;
+    postBtn.textContent = 'Post';
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+
+// ─── VOICE RECORDING ──────────────────────────────────────────────────────────
+async function startRecording() {
+  try {
+    recordingStream = await navigator.mediaDevices.getUserMedia({
+      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+    });
+  } catch(e) {
+    toast('Microphone access denied');
+    return false;
+  }
+
+  recordedChunks = [];
+  let mimeType = 'audio/webm;codecs=opus';
+  if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'audio/webm';
+  if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = '';
+
+  try {
+    mediaRecorder = new MediaRecorder(recordingStream, mimeType ? { mimeType, audioBitsPerSecond: 16000 } : {});
+  } catch(e) {
+    mediaRecorder = new MediaRecorder(recordingStream);
+  }
+
+  mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+  mediaRecorder.start();
+  recordingStartTime = Date.now();
+
+  showRecordingUI();
+  recordingTimerInt = setInterval(updateRecordingTime, 200);
+  return true;
+}
+
+function updateRecordingTime() {
+  const elapsed = (Date.now() - recordingStartTime) / 1000;
+  document.getElementById('recording-time').textContent = formatDuration(elapsed);
+  if (elapsed >= MAX_VOICE_SECONDS) stopRecording(true);
+}
+
+function stopRecording(keep = true) {
+  if (!mediaRecorder) return;
+  clearInterval(recordingTimerInt);
+
+  const finalize = () => {
+    recordingStream?.getTracks().forEach(t => t.stop());
+    recordingStream = null;
+    hideRecordingUI();
+
+    if (keep && recordedChunks.length) {
+      recordedDuration = (Date.now() - recordingStartTime) / 1000;
+      if (recordedDuration < 0.6) { toast('Too short'); recordedBlob = null; resetMicButton(); return; }
+      const mimeType = mediaRecorder.mimeType || 'audio/webm';
+      recordedBlob = new Blob(recordedChunks, { type: mimeType });
+      showVoicePreview();
+    } else {
+      resetMicButton();
+    }
+    mediaRecorder = null;
+  };
+
+  if (mediaRecorder.state !== 'inactive') {
+    mediaRecorder.onstop = finalize;
+    mediaRecorder.stop();
+  } else {
+    finalize();
+  }
+}
+
+function showRecordingUI() {
+  document.getElementById('msg-input-wrap').style.display = 'none';
+  document.getElementById('voice-preview').classList.remove('show');
+  document.getElementById('recording-ui').classList.add('show');
+  document.getElementById('mic-btn').classList.add('recording');
+  document.getElementById('send-btn').style.display = 'none';
+}
+
+function hideRecordingUI() {
+  document.getElementById('recording-ui').classList.remove('show');
+  document.getElementById('recording-time').textContent = '0:00';
+  document.getElementById('mic-btn').classList.remove('recording');
+}
+
+function showVoicePreview() {
+  document.getElementById('voice-preview').classList.add('show');
+  document.getElementById('voice-preview-time').textContent = formatDuration(recordedDuration);
+  document.getElementById('voice-preview-fill').style.width = '0%';
+  document.getElementById('mic-btn').style.display = 'none';
+  document.getElementById('send-btn').style.display = 'flex';
+  document.getElementById('send-btn').disabled = false;
+}
+
+function hideVoicePreview() {
+  document.getElementById('voice-preview').classList.remove('show');
+  document.getElementById('msg-input-wrap').style.display = 'flex';
+  recordedBlob = null;
+  recordedDuration = 0;
+  if (voicePreviewAudio) { voicePreviewAudio.pause(); voicePreviewAudio = null; }
+  resetMicButton();
+  document.getElementById('send-btn').disabled = !document.getElementById('msg-input').value.trim();
+}
+
+function resetMicButton() {
+  document.getElementById('msg-input-wrap').style.display = 'flex';
+  document.getElementById('mic-btn').style.display = document.getElementById('msg-input').value.trim() ? 'none' : 'flex';
+  document.getElementById('send-btn').style.display = document.getElementById('msg-input').value.trim() ? 'flex' : 'none';
+}
+
+function formatDuration(secs) {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+async function blobToBase64(blob) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function sendVoiceMessage() {
+  if (!recordedBlob || !activeCode) return;
+  const base64 = await blobToBase64(recordedBlob);
+  const sizeKB = Math.round((base64.length * 3/4) / 1024);
+  const msg = { text: base64, time: Date.now(), sent: true, read: true, type: 'voice', duration: recordedDuration };
+
+  if (activeType === 'group') {
+    await sendGroupMessage(base64, 'voice', { duration: recordedDuration });
+  } else {
+    addMessageToChat(activeCode, msg);
+    await pushToSupabase(activeCode, base64, 'voice', { duration: recordedDuration });
+  }
+
+  hideVoicePreview();
+  toast(`Voice sent · ${sizeKB}KB`);
+}
+
+
+function cleanExpiredStories() {
+  const expiry = Date.now() - STORY_EXPIRY_MS;
+  let changed = false;
+  Object.keys(stories).forEach(u => {
+    if (stories[u] && stories[u].time < expiry) { delete stories[u]; changed = true; }
+  });
+  if (myStory && myStory.time < expiry) { myStory = null; ls('myStory', ''); }
+  if (changed) saveStories();
+}
+
+function renderStoriesBar() {
+  const myAv = document.getElementById('my-story-avatar');
+  if (!myAv) return;
+  renderAvatarEl(myAv, myUsername, myUsername, 50);
+  const myRing = document.querySelector('#my-story-circle .story-ring');
+  const myBadge = document.querySelector('#my-story-circle .story-add-badge');
+  if (myStory) { myRing.classList.remove('no-story'); myBadge.style.display = 'none'; }
+  else { myRing.classList.add('no-story'); myBadge.style.display = 'flex'; }
+
+  const list = document.getElementById('stories-list');
+  list.innerHTML = '';
+  const activeStories = contacts.map(c => ({ contact: c, story: stories[c.code] })).filter(s => s.story);
+
+  activeStories.forEach(({ contact, story }) => {
+    const viewed = story.viewedByMe;
+    const div = document.createElement('div');
+    div.className = 'story-circle';
+    div.innerHTML = `
+      <div class="story-ring ${viewed ? 'viewed' : ''}">
+        <div class="story-avatar-wrap">${getAvatar(contact.code) ? `<img src="${getAvatar(contact.code)}">` : `<div class="avatar ${avatarColor(contact.code)}" style="width:100%;height:100%;font-size:18px;">${avatarLetter(contact.name)}</div>`}</div>
+      </div>
+      <span class="story-label">${escHtml(contact.name)}</span>`;
+    div.addEventListener('click', () => openStoryViewer(contact.code));
+    list.appendChild(div);
+  });
+}
+
+async function postStory(file) {
+  try {
+    const base64 = await compressImage(file, MAX_STORY_BYTES, 1080, 0.75);
+    myStory = { url: base64, time: Date.now(), viewers: [] };
+    saveMyStory();
+    renderStoriesBar();
+    contacts.forEach(c => pushToSupabase(c.code, base64, 'story'));
+    toast('Story posted');
+  } catch(e) { toast('Failed to post story'); }
+}
+
+function removeMyStory() {
+  myStory = null;
+  ls('myStory', '');
+  renderStoriesBar();
+  contacts.forEach(c => pushToSupabase(c.code, '', 'story_delete'));
+  toast('Story removed');
+}
+
+function openStoryViewer(username) {
+  const isMine = username === myUsername;
+  const story = isMine ? myStory : stories[username];
+  if (!story) return;
+
+  const viewer = document.getElementById('story-viewer');
+  const contact = contacts.find(c => c.code === username);
+  const name = isMine ? 'Your Story' : (contact?.name || username);
+
+  const av = document.getElementById('story-viewer-avatar');
+  renderAvatarEl(av, username, name, 34);
+  document.getElementById('story-viewer-name').textContent = name;
+  document.getElementById('story-viewer-time').textContent = formatTime(story.time);
+  document.getElementById('story-viewer-img').src = story.url;
+  viewer.classList.add('open');
+
+  if (!isMine) {
+    story.viewedByMe = true;
+    saveStories();
+    renderStoriesBar();
+    pushToSupabase(username, myUsername, 'story_view');
+  }
+
+  const viewersList = document.getElementById('story-viewers-list');
+  const deleteBtn = document.getElementById('story-viewer-delete');
+  if (isMine) {
+    deleteBtn.style.display = 'flex';
+    if (story.viewers?.length) {
+      viewersList.textContent = '👁 Viewed by ' + story.viewers.join(', ');
+      viewersList.style.display = 'block';
+    } else { viewersList.style.display = 'none'; }
+  } else {
+    deleteBtn.style.display = 'none';
+    viewersList.style.display = 'none';
+  }
+
+  const fill = document.getElementById('story-progress-fill');
+  fill.style.transition = 'none';
+  fill.style.width = '0%';
+  requestAnimationFrame(() => { fill.style.transition = 'width 5s linear'; fill.style.width = '100%'; });
+  clearTimeout(storyTimer);
+  storyTimer = setTimeout(closeStoryViewer, 5000);
+}
+
+function closeStoryViewer() {
+  clearTimeout(storyTimer);
+  document.getElementById('story-viewer').classList.remove('open');
+  document.getElementById('story-viewer-img').src = '';
+}
+
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
 async function requestNotificationPermission() {
   if (!('Notification' in window)) return false;
@@ -265,7 +774,8 @@ function showNotification(senderName, text, chatCode, chatType) {
   if (Notification.permission !== 'granted') return;
   if (document.hasFocus() && chatCode === activeCode) return;
   let preview = text;
-  if (text?.startsWith('data:')) preview = '🖼 Image';
+  if (text?.startsWith('data:audio')) preview = '🎤 Voice message';
+  else if (text?.startsWith('data:')) preview = '🖼 Image';
   else if (text?.length > 60) preview = text.slice(0, 60) + '…';
   const n = new Notification(`Blink — ${senderName}`, {
     body: preview || 'New message',
@@ -308,6 +818,7 @@ function showSidebar() {
 
 // ─── CONTACTS + GROUPS RENDER ─────────────────────────────────────────────────
 function renderContacts(filter = '') {
+  renderStoriesBar();
   const list = document.getElementById('contacts-list');
   list.innerHTML = '';
   const items = [];
@@ -335,6 +846,7 @@ function renderContacts(filter = '') {
       if (last.type === 'system') preview = last.text;
       else if (last.type === 'sticker') preview = '🎭 Sticker';
       else if (last.type === 'image')   preview = '🖼 Image';
+      else if (last.type === 'voice')   preview = '🎤 Voice message';
       else if (last.type === 'group_invite') preview = '👥 Group invite';
       else preview = (last.sent ? 'You: ' : (last.senderName ? last.senderName + ': ' : '')) + last.text;
     }
@@ -400,7 +912,6 @@ function openChat(code) {
   renderContacts(document.getElementById('search').value);
   showChat();
 
-  // Send read receipt only if this is a known contact
   if (contacts.find(c => c.code === code)) {
     pushToSupabase(code, '__read__', 'read_receipt');
   }
@@ -473,7 +984,17 @@ function renderMessages(code, type = 'dm') {
       bwrap.appendChild(nameLabel);
     }
     const bubble = document.createElement('div');
-    if (m.type === 'sticker') {
+    if (m.type === 'voice') {
+      bubble.className = 'bubble voice-bubble';
+      const barsHtml = Array.from({length: 24}).map((_, i) => `<span style="height:${8 + Math.random()*14}px"></span>`).join('');
+      bubble.innerHTML = `
+        <button class="voice-play-btn">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <div class="voice-wave-bar">${barsHtml}</div>
+        <span class="voice-duration">${formatDuration(m.duration || 0)}</span>`;
+      setupVoicePlayback(bubble, m.text, m.duration || 0);
+    } else if (m.type === 'sticker') {
       bubble.className = 'bubble sticker-bubble';
       bubble.innerHTML = `<img src="${m.text}" alt="sticker">`;
     } else if (m.type === 'image') {
@@ -504,7 +1025,6 @@ function renderMessages(code, type = 'dm') {
     }
     bwrap.insertBefore(bubble, bwrap.firstChild);
 
-    // Time + seen — seen left, time right
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
     if (m.sent) {
@@ -528,6 +1048,89 @@ function renderMessages(code, type = 'dm') {
     wrap.appendChild(row);
   });
   wrap.scrollTop = wrap.scrollHeight;
+}
+
+function setupVoicePlayback(bubbleEl, src, duration) {
+  const playBtn = bubbleEl.querySelector('.voice-play-btn');
+  const waveBar = bubbleEl.querySelector('.voice-wave-bar');
+  const bars = bubbleEl.querySelectorAll('.voice-wave-bar span');
+  let audio = null;
+  let playing = false;
+  let wasPlayingBeforeScrub = false;
+
+  function getAudio() {
+    if (!audio) audio = new Audio(src);
+    return audio;
+  }
+
+  function updateBarsFromPct(pct) {
+    const filledCount = Math.floor(pct * bars.length);
+    bars.forEach((b, i) => b.classList.toggle('played', i < filledCount));
+  }
+
+  function pctFromEvent(e) {
+    const rect = waveBar.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    let pct = (clientX - rect.left) / rect.width;
+    return Math.min(1, Math.max(0, pct));
+  }
+
+  playBtn.addEventListener('click', () => {
+    const a = getAudio();
+    if (playing) {
+      a.pause();
+      playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+      playing = false;
+      return;
+    }
+    a.play().catch(() => toast('Failed to play voice message'));
+    playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
+    playing = true;
+
+    a.ontimeupdate = () => {
+      const pct = a.currentTime / (a.duration || duration || 1);
+      updateBarsFromPct(pct);
+    };
+    a.onended = () => {
+      playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+      playing = false;
+      bars.forEach(b => b.classList.remove('played'));
+    };
+  });
+
+  // ─── Scrub / seek on the waveform ───────────────────────────────────────────
+  let scrubbing = false;
+
+  function startScrub(e) {
+    scrubbing = true;
+    wasPlayingBeforeScrub = playing;
+    const a = getAudio();
+    if (playing) a.pause();
+    seekTo(e);
+  }
+  function seekTo(e) {
+    const pct = pctFromEvent(e);
+    updateBarsFromPct(pct);
+    const a = getAudio();
+    const dur = a.duration || duration || 0;
+    if (dur) a.currentTime = pct * dur;
+  }
+  function endScrub() {
+    if (!scrubbing) return;
+    scrubbing = false;
+    if (wasPlayingBeforeScrub) {
+      const a = getAudio();
+      a.play().catch(() => {});
+      playBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
+      playing = true;
+    }
+  }
+
+  waveBar.style.cursor = 'pointer';
+  waveBar.addEventListener('mousedown', e => { startScrub(e); const mm = ev => seekTo(ev); const mu = () => { endScrub(); document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); }; document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu); });
+  waveBar.addEventListener('touchstart', e => { startScrub(e); }, { passive: true });
+  waveBar.addEventListener('touchmove', e => { if (scrubbing) seekTo(e); }, { passive: true });
+  waveBar.addEventListener('touchend', endScrub);
 }
 
 function hashColor(str) { let n=0; for(const c of str) n+=c.charCodeAt(0); return (n*47)%360; }
@@ -560,7 +1163,6 @@ function addMessageToChat(code, msg) {
   if (code === activeCode) renderMessages(code, activeType);
   renderContacts(document.getElementById('search').value);
 
-  // Send read receipt if message arrives while chat is already open and visible
   if (!msg.sent && ['text','image','sticker'].includes(msg.type)) {
     if (code === activeCode && activeType === 'dm' && document.hasFocus()) {
       if (contacts.find(c => c.code === code)) {
@@ -569,7 +1171,7 @@ function addMessageToChat(code, msg) {
     }
   }
 
-  if (!msg.sent && msg.type !== 'system' && msg.type !== 'code_change' && msg.type !== 'avatar_update' && msg.type !== 'read_receipt') {
+  if (!msg.sent && msg.type !== 'system' && msg.type !== 'code_change' && msg.type !== 'avatar_update' && msg.type !== 'read_receipt' && msg.type !== 'story' && msg.type !== 'story_view' && msg.type !== 'story_delete') {
     const isGroup  = groups.find(g => g.id === code);
     const contact  = contacts.find(c => c.code === code);
     const sender   = msg.senderName || contact?.name || code;
@@ -656,10 +1258,29 @@ async function pollMessages() {
     rows.forEach(r => {
       ids.push(r.id);
 
-      // ── Read receipt ──
+      if (r.type === 'story') {
+        ensureContact(r.from);
+        stories[r.from] = { url: r.text, time: new Date(r.created_at).getTime(), viewedByMe: false, viewers: [] };
+        saveStories();
+        renderStoriesBar();
+        return;
+      }
+      if (r.type === 'story_delete') {
+        delete stories[r.from];
+        saveStories();
+        renderStoriesBar();
+        return;
+      }
+      if (r.type === 'story_view') {
+        if (myStory) {
+          const viewerName = r.text || r.from;
+          if (!myStory.viewers.includes(viewerName)) myStory.viewers.push(viewerName);
+          saveMyStory();
+        }
+        return;
+      }
       if (r.type === 'read_receipt') {
         if (chats[r.from]) {
-          // Clear all seen flags first, then mark only the last sent message
           chats[r.from].forEach(m => { m.seen = false; });
           const lastSent = [...chats[r.from]].reverse().find(m => m.sent);
           if (lastSent) lastSent.seen = true;
@@ -669,7 +1290,6 @@ async function pollMessages() {
         }
         return;
       }
-
       if (r.type === 'avatar_update') {
         try {
           const { username, avatar } = JSON.parse(r.text);
@@ -697,7 +1317,7 @@ async function pollMessages() {
       if (r.groupId) {
         const group = groups.find(g => g.id === r.groupId);
         if (!group) return;
-        addMessageToChat(r.groupId, { text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.groupId===activeCode, type: r.type||'text', senderCode: r.senderCode, senderName: r.senderName });
+        addMessageToChat(r.groupId, { text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.groupId===activeCode, type: r.type||'text', senderCode: r.senderCode, senderName: r.senderName, duration: r.duration });
         return;
       }
       if (r.type === 'group_invite') {
@@ -708,12 +1328,11 @@ async function pollMessages() {
         } catch(e) {}
         return;
       }
-      // ── Regular DM fallback ──
-      const silentTypes = ['read_receipt','code_change','avatar_update','username_update'];
+      const silentTypes = ['read_receipt','code_change','avatar_update','username_update','story','story_view','story_delete'];
       if (silentTypes.includes(r.type)) return;
-      if (!r.text) return; // ignore empty messages
+      if (!r.text) return;
       ensureContact(r.from);
-      addMessageToChat(r.from, { text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text' });
+      addMessageToChat(r.from, { text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration });
     });
     if (ids.length) {
       await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?id=in.(${ids.join(',')})`, {
@@ -902,6 +1521,68 @@ document.getElementById('welcome-input').addEventListener('input', () => {
   document.getElementById('welcome-hint').textContent = 'No spaces. Letters, numbers and _ only.';
 });
 
+// Story editor
+document.getElementById('story-editor-cancel').addEventListener('click', closeStoryEditor);
+document.getElementById('story-editor-text-btn').addEventListener('click', () => {
+  editorEditingText = null;
+  editorActiveColor = '#ffffff';
+  editorBgOn = false;
+  document.querySelectorAll('.story-text-color').forEach(b => b.classList.toggle('active', b.dataset.color === '#ffffff'));
+  document.getElementById('story-text-bg-toggle').classList.remove('active');
+  document.getElementById('story-text-input').value = '';
+  document.getElementById('story-text-panel').classList.add('open');
+  document.getElementById('story-text-input').focus();
+});
+document.getElementById('story-editor-sticker-btn').addEventListener('click', openStickerPanelForStory);
+document.getElementById('story-editor-post-btn').addEventListener('click', flattenAndPost);
+
+document.querySelectorAll('.story-text-color').forEach(btn => {
+  btn.addEventListener('click', () => {
+    editorActiveColor = btn.dataset.color;
+    document.querySelectorAll('.story-text-color').forEach(b => b.classList.toggle('active', b === btn));
+  });
+});
+document.getElementById('story-text-bg-toggle').addEventListener('click', () => {
+  editorBgOn = !editorBgOn;
+  document.getElementById('story-text-bg-toggle').classList.toggle('active', editorBgOn);
+});
+document.getElementById('story-text-done').addEventListener('click', addTextElement);
+document.getElementById('story-text-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addTextElement(); }
+});
+
+window.addEventListener('resize', () => { if (document.getElementById('story-editor').classList.contains('open')) renderEditorCanvas(); });
+
+// Stories
+let storyPressTimer;
+document.getElementById('my-story-circle').addEventListener('click', () => {
+  if (myStory) openStoryViewer(myUsername);
+  else document.getElementById('story-file-input').click();
+});
+document.getElementById('my-story-circle').addEventListener('mousedown', () => {
+  if (myStory) storyPressTimer = setTimeout(() => { if (confirm('Remove your story?')) removeMyStory(); }, 600);
+});
+document.getElementById('my-story-circle').addEventListener('mouseup', () => clearTimeout(storyPressTimer));
+document.getElementById('my-story-circle').addEventListener('touchstart', () => {
+  if (myStory) storyPressTimer = setTimeout(() => { if (confirm('Remove your story?')) removeMyStory(); }, 600);
+}, { passive: true });
+document.getElementById('my-story-circle').addEventListener('touchend', () => clearTimeout(storyPressTimer));
+document.getElementById('story-file-input').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  openStoryEditor(file);
+});
+document.getElementById('story-viewer-close').addEventListener('click', closeStoryViewer);
+document.getElementById('story-viewer-tap-right').addEventListener('click', closeStoryViewer);
+document.getElementById('story-viewer-tap-left').addEventListener('click', closeStoryViewer);
+document.getElementById('story-viewer-delete').addEventListener('click', () => {
+  if (confirm('Remove your story?')) {
+    removeMyStory();
+    closeStoryViewer();
+  }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeStoryViewer(); });
+
 // Lightbox
 document.getElementById('lightbox').addEventListener('click', e => { if(e.target===document.getElementById('lightbox')) closeLightbox(); });
 document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
@@ -918,6 +1599,13 @@ document.getElementById('avatar-file-input').addEventListener('change', async e 
 document.getElementById('settings-remove-avatar').addEventListener('click', () => {
   removeProfilePicture();
   document.getElementById('settings-overlay').classList.remove('open');
+});
+
+// Settings — remove story
+document.getElementById('settings-remove-story').addEventListener('click', () => {
+  if (!myStory) { toast('You have no active story'); return; }
+  document.getElementById('settings-overlay').classList.remove('open');
+  if (confirm('Remove your story?')) removeMyStory();
 });
 
 // Remove account
@@ -963,6 +1651,10 @@ document.getElementById('settings-btn').addEventListener('click', () => {
   try { document.getElementById('settings-username-val').textContent = '@' + myUsername; } catch(e) {}
   try { updateMyAvatarUI(); } catch(e) {}
   try { updateNotificationToggleUI(); } catch(e) {}
+  try {
+    const removeStoryBtn = document.getElementById('settings-remove-story');
+    if (removeStoryBtn) removeStoryBtn.style.display = myStory ? 'block' : 'none';
+  } catch(e) {}
   document.getElementById('settings-overlay').classList.add('open');
 });
 document.getElementById('settings-close').addEventListener('click', () => document.getElementById('settings-overlay').classList.remove('open'));
@@ -1134,15 +1826,107 @@ document.getElementById('sticker-btn').addEventListener('click', ()=>{
 });
 document.addEventListener('click', e=>{if(!e.target.closest('#input-area'))closeAllPanels();});
 
+// Voice recording — press and hold mic button
+const micBtn = document.getElementById('mic-btn');
+let micHeld = false;
+let micStartedRecording = false;
+
+async function handleMicDown(e) {
+  e.preventDefault();
+  if (!activeCode) return;
+  micHeld = true;
+  micStartedRecording = await startRecording();
+}
+function handleMicUp() {
+  if (!micHeld) return;
+  micHeld = false;
+  if (micStartedRecording) stopRecording(true);
+  micStartedRecording = false;
+}
+micBtn.addEventListener('mousedown', handleMicDown);
+micBtn.addEventListener('mouseup', handleMicUp);
+micBtn.addEventListener('mouseleave', () => { if (micHeld) handleMicUp(); });
+micBtn.addEventListener('touchstart', handleMicDown, { passive: false });
+micBtn.addEventListener('touchend', handleMicUp);
+micBtn.addEventListener('touchcancel', handleMicUp);
+
+document.getElementById('recording-cancel').addEventListener('click', () => {
+  micHeld = false;
+  stopRecording(false);
+});
+
+document.getElementById('voice-preview-delete').addEventListener('click', () => {
+  hideVoicePreview();
+});
+
+document.getElementById('voice-preview-play').addEventListener('click', () => {
+  if (!recordedBlob) return;
+  const btn = document.getElementById('voice-preview-play');
+  const fill = document.getElementById('voice-preview-fill');
+  const timeEl = document.getElementById('voice-preview-time');
+
+  if (voicePreviewAudio && !voicePreviewAudio.paused) {
+    voicePreviewAudio.pause();
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    return;
+  }
+  if (!voicePreviewAudio) voicePreviewAudio = new Audio(URL.createObjectURL(recordedBlob));
+  voicePreviewAudio.play();
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>';
+
+  voicePreviewAudio.ontimeupdate = () => {
+    const pct = (voicePreviewAudio.currentTime / (voicePreviewAudio.duration || recordedDuration)) * 100;
+    fill.style.width = pct + '%';
+    timeEl.textContent = formatDuration(voicePreviewAudio.currentTime);
+  };
+  voicePreviewAudio.onended = () => {
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    fill.style.width = '0%';
+    timeEl.textContent = formatDuration(recordedDuration);
+  };
+});
+
+// Scrub the voice preview bar before sending
+const voicePreviewBar = document.getElementById('voice-preview-bar');
+function voicePreviewSeek(e) {
+  if (!recordedBlob) return;
+  if (!voicePreviewAudio) voicePreviewAudio = new Audio(URL.createObjectURL(recordedBlob));
+  const rect = voicePreviewBar.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const pct = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  const dur = voicePreviewAudio.duration || recordedDuration || 0;
+  if (dur) voicePreviewAudio.currentTime = pct * dur;
+  document.getElementById('voice-preview-fill').style.width = (pct * 100) + '%';
+  document.getElementById('voice-preview-time').textContent = formatDuration(pct * dur);
+}
+voicePreviewBar.addEventListener('mousedown', e => {
+  voicePreviewSeek(e);
+  const mm = ev => voicePreviewSeek(ev);
+  const mu = () => { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); };
+  document.addEventListener('mousemove', mm); document.addEventListener('mouseup', mu);
+});
+voicePreviewBar.addEventListener('touchstart', voicePreviewSeek, { passive: true });
+voicePreviewBar.addEventListener('touchmove', voicePreviewSeek, { passive: true });
+
 // Msg input
 const msgInput=document.getElementById('msg-input');
 const sendBtn=document.getElementById('send-btn');
 msgInput.addEventListener('input',()=>{
-  sendBtn.disabled=!msgInput.value.trim();
+  const hasText = !!msgInput.value.trim();
+  sendBtn.disabled = !hasText;
+  sendBtn.style.display = hasText ? 'flex' : 'none';
+  document.getElementById('mic-btn').style.display = hasText ? 'none' : 'flex';
   msgInput.style.height='auto';
   msgInput.style.height=Math.min(msgInput.scrollHeight,120)+'px';
 });
 msgInput.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(!sendBtn.disabled)sendMessage();}});
-sendBtn.addEventListener('click',sendMessage);
+sendBtn.addEventListener('click', () => {
+  if (recordedBlob) sendVoiceMessage();
+  else sendMessage();
+});
+
+// Initial state — show mic, hide send
+document.getElementById('mic-btn').style.display = 'flex';
+document.getElementById('send-btn').style.display = 'none';
 
 init();
