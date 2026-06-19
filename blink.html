@@ -82,6 +82,19 @@
       <button id="edit-delete"    class="edit-action-btn danger" disabled>Delete</button>
     </div>
 
+    <!-- STORIES BAR -->
+    <div id="stories-bar">
+      <input type="file" id="story-file-input" accept="image/*" style="display:none">
+      <div class="story-circle" id="my-story-circle">
+        <div class="story-ring no-story">
+          <div class="story-avatar-wrap" id="my-story-avatar"></div>
+        </div>
+        <div class="story-add-badge">+</div>
+        <span class="story-label">Your Story</span>
+      </div>
+      <div id="stories-list"></div>
+    </div>
+
     <div id="search-wrap">
       <input id="search" type="text" placeholder="Search">
     </div>
@@ -130,6 +143,7 @@
       </label>
     </div>
     <p class="settings-note">Changing your username will notify all your contacts automatically.</p>
+    <button class="settings-action-btn danger" id="settings-remove-story" style="margin-top:8px; display:none;">Remove My Story</button>
     <button class="settings-action-btn danger" id="settings-remove-account" style="margin-top:8px;">Remove Account</button>
   </div>
 </div>
@@ -201,8 +215,40 @@
         <div id="msg-input-wrap">
           <textarea id="msg-input" placeholder="Blink" rows="1"></textarea>
         </div>
+
+        <!-- Recording UI — replaces input wrap while recording -->
+        <div id="recording-ui">
+          <button id="recording-cancel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <div id="recording-dot"></div>
+          <div id="recording-time">0:00</div>
+          <div id="recording-wave">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+
+        <!-- Voice preview before sending -->
+        <div id="voice-preview">
+          <button id="voice-preview-delete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          </button>
+          <button id="voice-preview-play">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+          <div id="voice-preview-bar"><div id="voice-preview-fill"></div></div>
+          <div id="voice-preview-time">0:00</div>
+        </div>
+
         <button id="send-btn" disabled>
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 16-8-4-8 4 8-16z"/></svg>
+        </button>
+        <button id="mic-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 1a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V5a4 4 0 0 0-4-4z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
         </button>
       </div>
     </div>
@@ -280,6 +326,75 @@
     </svg>
   </button>
   <img id="lightbox-img" src="" alt="full image">
+</div>
+
+<!-- STORY EDITOR -->
+<div id="story-editor">
+  <div id="story-editor-canvas-wrap">
+    <canvas id="story-editor-canvas"></canvas>
+    <div id="story-editor-overlay"></div>
+  </div>
+  <div id="story-editor-top">
+    <button id="story-editor-cancel">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <button id="story-editor-text-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+      Text
+    </button>
+    <button id="story-editor-sticker-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+      Sticker
+    </button>
+    <button id="story-editor-post-btn">Post</button>
+  </div>
+
+  <!-- Text input panel -->
+  <div id="story-text-panel">
+    <div id="story-text-color-row">
+      <button class="story-text-color active" data-color="#ffffff" style="background:#ffffff"></button>
+      <button class="story-text-color" data-color="#000000" style="background:#000000"></button>
+      <button class="story-text-color" data-color="#ef4444" style="background:#ef4444"></button>
+      <button class="story-text-color" data-color="#f59e0b" style="background:#f59e0b"></button>
+      <button class="story-text-color" data-color="#10b981" style="background:#10b981"></button>
+      <button class="story-text-color" data-color="#2563eb" style="background:#2563eb"></button>
+      <button class="story-text-color" data-color="#8b5cf6" style="background:#8b5cf6"></button>
+      <button class="story-text-color" data-color="#ec4899" style="background:#ec4899"></button>
+    </div>
+    <textarea id="story-text-input" placeholder="Type something..." rows="1"></textarea>
+    <div id="story-text-actions">
+      <button id="story-text-bg-toggle">Aa Highlight</button>
+      <button id="story-text-done">Done</button>
+    </div>
+  </div>
+
+  <!-- Sticker panel reuse -->
+  <div id="story-sticker-panel">
+    <div id="story-sticker-tabs"></div>
+    <div id="story-sticker-grid"></div>
+  </div>
+</div>
+
+<!-- STORY VIEWER -->
+<div id="story-viewer">
+  <div id="story-progress-bar"><div id="story-progress-fill"></div></div>
+  <div id="story-viewer-header">
+    <div class="avatar" id="story-viewer-avatar"></div>
+    <div class="story-viewer-info">
+      <div id="story-viewer-name"></div>
+      <div id="story-viewer-time"></div>
+    </div>
+    <button id="story-viewer-delete" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    </button>
+    <button id="story-viewer-close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <img id="story-viewer-img" src="" alt="story">
+  <div id="story-viewer-tap-left"></div>
+  <div id="story-viewer-tap-right"></div>
+  <div id="story-viewers-list"></div>
 </div>
 
 <div id="toast"></div>
