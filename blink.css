@@ -825,3 +825,20 @@ body {
   text-align: center; color: #2563eb; padding: 12px 0;
   font-family: -apple-system, monospace;
 }
+
+/* MANAGE DEVICES */
+#manage-devices-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.device-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 9px 12px; background: var(--search-bg);
+  border-radius: 10px;
+}
+.device-row-info { min-width: 0; flex: 1; }
+.device-row-label { font-size: 13px; font-weight: 600; }
+.device-row-seen { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+.device-remove-btn {
+  background: rgba(255,69,58,0.15); color: #ff453a; border: none;
+  border-radius: 8px; padding: 6px 11px; font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: inherit; flex-shrink: 0; transition: background 0.15s;
+}
+.device-remove-btn:hover { background: rgba(255,69,58,0.25); }
