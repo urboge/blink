@@ -31,6 +31,11 @@ let storyTimer       = null;
 let editMode         = false;
 let selectedContacts = new Set();
 
+// Device identity / sync
+let myDeviceId       = '';
+let lastSyncCheckin  = 0;
+const DEVICE_CHECKIN_INTERVAL = 60 * 1000; // ping last_seen every 60s while app open
+
 // Voice recording state
 let mediaRecorder     = null;
 let recordedChunks    = [];
@@ -41,6 +46,7 @@ let recordedDuration  = 0;
 let recordingStream   = null;
 let voicePreviewAudio = null;
 const MAX_VOICE_SECONDS = 60;
+const MAX_FILE_BYTES = 500 * 1024; // 500KB cap for generic files
 
 const REACTIONS     = ['👍','❤️','😂','😮','😢','🔥'];
 const AVATAR_COLORS = ['av-blue','av-purple','av-pink','av-green','av-orange','av-teal'];
@@ -147,9 +153,188 @@ async function releaseUsername(username) {
   } catch(e) {}
 }
 
+// ─── DEVICE IDENTITY ───────────────────────────────────────────────────────────
+function getOrCreateDeviceId() {
+  let id = ls('myDeviceId');
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    ls('myDeviceId', id);
+  }
+  return id;
+}
+
+async function registerDevice() {
+  if (!myUsername || !myDeviceId) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/devices`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'resolution=merge-duplicates,return=minimal'
+      },
+      body: JSON.stringify({
+        device_id: myDeviceId, username: myUsername,
+        device_label: guessDeviceLabel(), last_seen: new Date().toISOString()
+      })
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.error('registerDevice failed:', res.status, errText);
+    } else {
+      console.log('registerDevice OK:', myDeviceId, myUsername);
+    }
+  } catch(e) { console.error('registerDevice exception:', e); }
+}
+
+async function checkinDevice() {
+  if (!myUsername || !myDeviceId) return;
+  if (Date.now() - lastSyncCheckin < DEVICE_CHECKIN_INTERVAL) return;
+  lastSyncCheckin = Date.now();
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${myDeviceId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ last_seen: new Date().toISOString() })
+    });
+  } catch(e) {}
+}
+
+function guessDeviceLabel() {
+  const ua = navigator.userAgent;
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/Android/.test(ua)) return isMobile() ? 'Android Phone' : 'Android Tablet';
+  if (/Macintosh/.test(ua)) return 'Mac';
+  if (/Windows/.test(ua)) return 'Windows PC';
+  return 'Device';
+}
+
+async function getMyOtherDevices() {
+  if (!myUsername) return [];
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/devices?username=eq.${encodeURIComponent(myUsername)}&device_id=neq.${myDeviceId}&select=*`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) return [];
+    return await res.json();
+  } catch(e) { return []; }
+}
+
+// Removes only THIS device's row from the devices table. Used when a
+// secondary device "leaves" the account without destroying the shared
+// username, since other devices may still be actively using it.
+async function unregisterThisDevice() {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${myDeviceId}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+  } catch(e) {}
+}
+
+// ─── DEVICE LINKING (new device joins existing account) ───────────────────────
+function generateLinkCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+async function sendLinkRequest(targetUsername, requestingDeviceId) {
+  // Requesting device has no username yet — sends "from" as its deviceId
+  await pushRaw(requestingDeviceId, targetUsername, requestingDeviceId, 'link_request');
+}
+
+async function respondToLinkRequest(targetUsername, requestingDeviceId) {
+  // This device (the existing, logged-in one) generates a code and stores it server-side
+  const code = generateLinkCode();
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/link_requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ target_username: myUsername, requesting_device_id: requestingDeviceId, code })
+    });
+  } catch(e) {}
+  return code;
+}
+
+async function submitLinkCode(targetUsername, requestingDeviceId, enteredCode) {
+  // Requesting device sends the code back to be verified by the EXISTING device.
+  await pushRaw(requestingDeviceId, targetUsername, JSON.stringify({ requestingDeviceId, code: enteredCode }), 'link_confirm');
+}
+
+async function verifyAndApproveLinkConfirm(requestingDeviceId, submittedCode) {
+  // Runs on the EXISTING device. Looks up the real pending code server-side.
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/link_requests?requesting_device_id=eq.${encodeURIComponent(requestingDeviceId)}&target_username=eq.${encodeURIComponent(myUsername)}&order=created_at.desc&limit=1&select=*`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) return false;
+    const rows = await res.json();
+    if (!rows.length) return false;
+    const req = rows[0];
+
+    const expired = new Date(req.expires_at) < new Date();
+    if (expired) return false;
+
+    if (req.attempts >= 5) return false; // rate limit
+
+    if (req.code !== submittedCode) {
+      await fetch(`${SUPABASE_URL}/rest/v1/link_requests?id=eq.${req.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ attempts: req.attempts + 1 })
+      });
+      return false;
+    }
+
+    await pushRaw(myUsername, requestingDeviceId, JSON.stringify({ username: myUsername }), 'link_approved');
+    await fetch(`${SUPABASE_URL}/rest/v1/link_requests?id=eq.${req.id}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    return true;
+  } catch(e) { return false; }
+}
+
+function showLinkApprovalUI(requestingDeviceId, code) {
+  // Shown on the EXISTING, already-logged-in device as a special non-chat banner
+  document.getElementById('link-approval-code').textContent = code;
+  document.getElementById('link-approval-overlay').classList.add('open');
+  clearTimeout(window._linkApprovalTimeout);
+  window._linkApprovalTimeout = setTimeout(() => {
+    document.getElementById('link-approval-overlay').classList.remove('open');
+  }, 5 * 60 * 1000);
+}
+
+// ─── LINKING POLL LOOP (used on welcome screen, before myUsername exists) ─────
+let linkingPollInterval = null;
+
+function startLinkingPoll(onMessage) {
+  stopLinkingPoll();
+  linkingPollInterval = setInterval(async () => {
+    const rows = await pollRaw(myDeviceId);
+    if (!rows.length) return;
+    const ids = rows.map(r => r.id);
+    rows.forEach(r => onMessage(r));
+    await deleteMessageIds(ids);
+  }, 2500);
+}
+function stopLinkingPoll() {
+  if (linkingPollInterval) { clearInterval(linkingPollInterval); linkingPollInterval = null; }
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function init() {
+  // Safety net: force-remove splash from layout once its fade-out finishes,
+  // regardless of CSS animation timing — guarantees it never blocks clicks.
+  setTimeout(() => {
+    const splashEl = document.getElementById('splash');
+    if (splashEl) splashEl.style.display = 'none';
+  }, 2200);
+
   myUsername = ls('myUsername') || '';
+  myDeviceId = getOrCreateDeviceId();
   const oldCode = ls('myCode');
   if (oldCode && !myUsername) ls('myCode', '');
 
@@ -159,8 +344,31 @@ async function init() {
 
   if (!myUsername) {
     document.getElementById('welcome-screen').style.display = 'flex';
+    startLinkingPoll(handleLinkingPollMessage);
     return;
   }
+  startApp();
+}
+
+// Handles messages received on the welcome screen, before an account exists.
+// Only one message type matters here: link_approved.
+function handleLinkingPollMessage(r) {
+  if (r.type === 'link_approved') {
+    try {
+      const { username } = JSON.parse(r.text);
+      completeLinking(username);
+    } catch(e) {}
+  }
+}
+
+async function completeLinking(username) {
+  stopLinkingPoll();
+  myUsername = username;
+  ls('myUsername', myUsername);
+  document.getElementById('link-modal').classList.remove('open');
+  document.getElementById('welcome-screen').style.display = 'none';
+  toast('Connected as @' + username);
+  await registerDevice();
   startApp();
 }
 
@@ -181,7 +389,13 @@ async function startApp() {
   cleanExpiredStories();
   renderContacts();
   await loadStickers();
-  if (SUPABASE_URL && SUPABASE_KEY) setInterval(pollMessages, POLL_INTERVAL);
+  await registerDevice();
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    setInterval(pollMessages, POLL_INTERVAL);
+    setInterval(checkinDevice, DEVICE_CHECKIN_INTERVAL);
+    checkinDevice();
+    maybeAutoSync();
+  }
   const lastChat = ls('lastChat');
   const lastType = ls('lastType') || 'dm';
   if (lastChat) {
@@ -776,6 +990,7 @@ function showNotification(senderName, text, chatCode, chatType) {
   let preview = text;
   if (text?.startsWith('data:audio')) preview = '🎤 Voice message';
   else if (text?.startsWith('data:')) preview = '🖼 Image';
+  else if (text?.startsWith('{') && text?.includes('"data":"data:')) preview = '📎 File';
   else if (text?.length > 60) preview = text.slice(0, 60) + '…';
   const n = new Notification(`Blink — ${senderName}`, {
     body: preview || 'New message',
@@ -801,7 +1016,199 @@ function updateNotificationToggleUI() {
   }
 }
 
-// ─── MOBILE NAV ───────────────────────────────────────────────────────────────
+// ─── SYNC ENGINE ────────────────────────────────────────────────────────────────
+// Lightweight chat-fingerprint based sync. Each chat is represented by a short
+// hash of its last message older than 24h. Devices compare fingerprints first;
+// only mismatched chats trigger an actual message exchange.
+
+async function hashString(str) {
+  try {
+    const enc = new TextEncoder().encode(str);
+    const buf = await crypto.subtle.digest('SHA-256', enc);
+    const arr = Array.from(new Uint8Array(buf));
+    return arr.map(b => b.toString(16).padStart(2,'0')).join('').slice(0, 12);
+  } catch(e) {
+    // Fallback simple hash if crypto.subtle unavailable
+    let h = 0;
+    for (let i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) | 0; }
+    return Math.abs(h).toString(16).padStart(12, '0');
+  }
+}
+
+async function getChatFingerprint(chatId) {
+  const msgs = chats[chatId] || [];
+  const cutoff = Date.now() - 24*60*60*1000;
+  const eligible = msgs.filter(m => m.time < cutoff && m.type !== 'system' && m.text !== '__read__' && m.text !== '');
+  if (!eligible.length) return null;
+  const last = eligible[eligible.length - 1];
+  const raw = `${last.time}|${last.sent ? myUsername : (last.senderCode||chatId)}|${(last.text||'').slice(0,200)}`;
+  return await hashString(raw);
+}
+
+async function buildSyncManifest() {
+  const chatIds = Object.keys(chats);
+  const chatFingerprints = {};
+  for (const id of chatIds) {
+    const fp = await getChatFingerprint(id);
+    if (fp) chatFingerprints[id] = { fp, count: (chats[id]||[]).length };
+  }
+  const contactManifest = contacts.map(c => ({ code: c.code, name: c.name, lastModified: c.lastModified || 0 }));
+  const stickerIds = customStickers.map(s => s.id);
+  // Lightweight avatar fingerprint: just a hash of the data URL so we can tell
+  // if the other device has a different (or missing) picture without sending
+  // the actual image in the manifest.
+  const myAvatarHash = myAvatar ? await hashString(myAvatar) : null;
+  const contactAvatarHashes = {};
+  for (const code of Object.keys(avatars)) {
+    if (avatars[code]) contactAvatarHashes[code] = await hashString(avatars[code]);
+  }
+  return {
+    chatFingerprints, contacts: contactManifest, stickerIds, deviceId: myDeviceId,
+    myAvatarHash, contactAvatarHashes
+  };
+}
+
+async function requestSync(manual = false) {
+  const others = await getMyOtherDevices();
+  if (!others.length) {
+    if (manual) toast('No other devices found for this account');
+    return;
+  }
+  const manifest = await buildSyncManifest();
+  const payload = JSON.stringify(manifest);
+  for (const dev of others) {
+    await pushToSupabase(myUsername, payload, 'sync_request', { targetDeviceId: dev.device_id });
+  }
+  if (manual) toast(`Sync requested from ${others.length} device${others.length>1?'s':''}`);
+}
+
+// Instantly push a single contact change to other devices, instead of waiting
+// for a full manual/auto sync. Used right after adding, renaming, or removing
+// a contact so other devices reflect it without needing the Sync button.
+async function pushContactUpdateToDevices(contact, removed = false) {
+  const others = await getMyOtherDevices();
+  if (!others.length) return;
+  const payload = JSON.stringify({ contact, removed });
+  for (const dev of others) {
+    await pushToSupabase(myUsername, payload, 'contact_sync', { targetDeviceId: dev.device_id });
+  }
+}
+
+async function maybeAutoSync() {
+  const lastOpen = parseInt(ls('lastAppOpen') || '0', 10);
+  ls('lastAppOpen', String(Date.now()));
+  const TWO_DAYS = 2*24*60*60*1000;
+  if (lastOpen && (Date.now() - lastOpen) > TWO_DAYS) {
+    requestSync(false);
+  }
+}
+
+// Called when this device receives someone else's sync_request manifest
+async function handleSyncRequest(remoteManifest, fromDeviceId) {
+  const myManifest = await buildSyncManifest();
+  const response = { fromDeviceId: myDeviceId, chats: {}, contactsToSend: [], contactsNeeded: [], stickersToSend: [], avatarsToSend: {} };
+
+  // Compare chats
+  const allChatIds = new Set([...Object.keys(myManifest.chatFingerprints), ...Object.keys(remoteManifest.chatFingerprints)]);
+  for (const chatId of allChatIds) {
+    const mine = myManifest.chatFingerprints[chatId];
+    const theirs = remoteManifest.chatFingerprints[chatId];
+    if (!theirs || (mine && mine.fp !== theirs.fp)) {
+      // They're missing this chat or it differs — send my full chat content
+      response.chats[chatId] = chats[chatId] || [];
+    }
+    if (mine && theirs && mine.fp === theirs.fp) continue; // in sync, skip
+  }
+
+  // Compare contacts — send mine if newer, note which of theirs I might be missing
+  const myContactMap = Object.fromEntries(myManifest.contacts.map(c => [c.code, c]));
+  const theirContactMap = Object.fromEntries((remoteManifest.contacts||[]).map(c => [c.code, c]));
+  for (const c of myManifest.contacts) {
+    const theirVersion = theirContactMap[c.code];
+    if (!theirVersion || (c.lastModified||0) > (theirVersion.lastModified||0)) {
+      response.contactsToSend.push(contacts.find(x => x.code === c.code));
+    }
+  }
+  for (const code of Object.keys(theirContactMap)) {
+    if (!myContactMap[code]) response.contactsNeeded.push(code);
+  }
+
+  // Stickers — send any custom sticker they don't have
+  const theirStickerIds = new Set(remoteManifest.stickerIds || []);
+  response.stickersToSend = customStickers.filter(s => !theirStickerIds.has(s.id));
+
+  // Avatars — my own profile picture: send it if they don't have the same hash
+  if (myAvatar && myManifest.myAvatarHash !== remoteManifest.myAvatarHash) {
+    response.avatarsToSend[myUsername] = myAvatar;
+  }
+  // Avatars I have stored for contacts: send any where my hash differs from theirs
+  const theirContactAvatarHashes = remoteManifest.contactAvatarHashes || {};
+  for (const code of Object.keys(avatars)) {
+    if (!avatars[code]) continue;
+    const myHash = myManifest.contactAvatarHashes[code];
+    if (myHash && myHash !== theirContactAvatarHashes[code]) {
+      response.avatarsToSend[code] = avatars[code];
+    }
+  }
+
+  await pushToSupabase(myUsername, JSON.stringify(response), 'sync_response', { targetDeviceId: fromDeviceId });
+}
+
+// Called when this device receives a sync_response with actual data to merge
+function applySyncResponse(response) {
+  let changed = false;
+
+  // Merge chats — union + dedupe by (time + sender + text)
+  Object.entries(response.chats || {}).forEach(([chatId, remoteMsgs]) => {
+    if (!chats[chatId]) chats[chatId] = [];
+    const existingKeys = new Set(chats[chatId].map(m => `${m.time}|${m.text}|${m.sent}`));
+    remoteMsgs.forEach(rm => {
+      const key = `${rm.time}|${rm.text}|${!rm.sent}`; // flip sent/received perspective
+      const mirrored = { ...rm, sent: !rm.sent }; // what they sent, I received (or vice versa)
+      const directKey = `${rm.time}|${rm.text}|${rm.sent}`;
+      if (!existingKeys.has(directKey) && !existingKeys.has(key)) {
+        chats[chatId].push(rm);
+        existingKeys.add(directKey);
+        changed = true;
+      }
+    });
+    chats[chatId].sort((a,b) => a.time - b.time);
+  });
+
+  // Merge contacts
+  (response.contactsToSend || []).forEach(rc => {
+    if (!rc) return;
+    const existing = contacts.find(c => c.code === rc.code);
+    if (!existing) { contacts.push(rc); changed = true; }
+    else if ((rc.lastModified||0) > (existing.lastModified||0)) {
+      Object.assign(existing, rc); changed = true;
+    }
+  });
+
+  // Merge stickers
+  (response.stickersToSend || []).forEach(s => {
+    if (!customStickers.find(cs => cs.id === s.id)) { customStickers.push(s); changed = true; }
+  });
+
+  // Merge avatars — for my own username, update myAvatar; for everyone else,
+  // store it in the avatars map keyed by their username.
+  Object.entries(response.avatarsToSend || {}).forEach(([code, avatarData]) => {
+    if (code === myUsername) {
+      if (avatarData !== myAvatar) { myAvatar = avatarData; ls('myAvatar', myAvatar); updateMyAvatarUI(); changed = true; }
+    } else {
+      if (avatars[code] !== avatarData) { avatars[code] = avatarData; changed = true; }
+    }
+  });
+
+  if (changed) {
+    saveChats(); saveContacts(); saveCustomStickers(); saveAvatars();
+    renderContacts(document.getElementById('search')?.value || '');
+    if (activeCode && chats[activeCode]) renderMessages(activeCode, activeType);
+    toast('Synced with your other device');
+  }
+}
+
+
 function showChat() {
   if (!isMobile()) return;
   document.getElementById('sidebar').classList.add('hidden-mobile');
@@ -847,6 +1254,7 @@ function renderContacts(filter = '') {
       else if (last.type === 'sticker') preview = '🎭 Sticker';
       else if (last.type === 'image')   preview = '🖼 Image';
       else if (last.type === 'voice')   preview = '🎤 Voice message';
+      else if (last.type === 'file')    preview = '📎 File';
       else if (last.type === 'group_invite') preview = '👥 Group invite';
       else preview = (last.sent ? 'You: ' : (last.senderName ? last.senderName + ': ' : '')) + last.text;
     }
@@ -984,7 +1392,31 @@ function renderMessages(code, type = 'dm') {
       bwrap.appendChild(nameLabel);
     }
     const bubble = document.createElement('div');
-    if (m.type === 'voice') {
+    if (m.type === 'file') {
+      bubble.className = 'bubble file-bubble';
+      try {
+        const fileData = JSON.parse(m.text);
+        const sizeKB = Math.round(fileData.size / 1024);
+        bubble.innerHTML = `
+          <div class="file-icon-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div class="file-info">
+            <div class="file-name">${escHtml(fileData.name)}</div>
+            <div class="file-size">${sizeKB}KB</div>
+          </div>`;
+        bubble.addEventListener('click', () => {
+          const a = document.createElement('a');
+          a.href = fileData.data;
+          a.download = fileData.name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        });
+      } catch(e) {
+        bubble.innerHTML = '<span style="font-size:13px;opacity:0.6">📎 File unavailable</span>';
+      }
+    } else if (m.type === 'voice') {
       bubble.className = 'bubble voice-bubble';
       const barsHtml = Array.from({length: 24}).map((_, i) => `<span style="height:${8 + Math.random()*14}px"></span>`).join('');
       bubble.innerHTML = `
@@ -997,6 +1429,14 @@ function renderMessages(code, type = 'dm') {
     } else if (m.type === 'sticker') {
       bubble.className = 'bubble sticker-bubble';
       bubble.innerHTML = `<img src="${m.text}" alt="sticker">`;
+      // Tap a received sticker to show a small menu
+      if (!m.sent) {
+        bubble.style.cursor = 'pointer';
+        bubble.addEventListener('click', e => {
+          e.stopPropagation();
+          showStickerMenu(bubble, bwrap, m.text);
+        });
+      }
     } else if (m.type === 'image') {
       if (m.expired || !m.text) {
         bubble.className = 'bubble';
@@ -1231,29 +1671,138 @@ function joinGroup(invite) {
 }
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
+// Cache of recipient device lists so we don't hit the devices table on every
+// keystroke-triggered send. Short-lived — a minute is plenty since device
+// lists change rarely.
+const deviceListCache = new Map(); // username -> { devices: [...], fetchedAt }
+const DEVICE_CACHE_MS = 60 * 1000;
+
+async function getDevicesForUsername(username) {
+  const cached = deviceListCache.get(username);
+  if (cached && (Date.now() - cached.fetchedAt) < DEVICE_CACHE_MS) return cached.devices;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/devices?username=eq.${encodeURIComponent(username)}&select=device_id`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.error('getDevicesForUsername failed:', res.status, errText);
+      return [];
+    }
+    const rows = await res.json();
+    const ids = rows.map(r => r.device_id);
+    console.log('getDevicesForUsername', username, '->', ids);
+    deviceListCache.set(username, { devices: ids, fetchedAt: Date.now() });
+    return ids;
+  } catch(e) { console.error('getDevicesForUsername exception:', e); return []; }
+}
+
+// Builds the actual address a message should be written to. If the recipient
+// has one or more registered devices, the address is forked per device
+// (username#deviceId) so each device has its own row and polls only its own
+// address — no race condition over who reads it first. If no devices are
+// registered (lookup failed, or recipient never registered any device — e.g.
+// an older client), falls back to the bare username so delivery still works.
+async function resolveDeliveryAddresses(username) {
+  const deviceIds = await getDevicesForUsername(username);
+  if (!deviceIds.length) return [username]; // fallback: bare address
+  return deviceIds.map(id => `${username}#${id}`);
+}
+
 async function pushToSupabase(toCode, text, type = 'text', extra = {}) {
   try {
     const check = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?select=id&limit=1`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'count=exact' } });
     const count = parseInt(check.headers.get('content-range')?.split('/')[1] || '0');
     if (count > SERVER_LIMIT) { toast('Server busy — try again shortly'); return; }
+
+    const isDeviceControlMessage = !!extra.targetDeviceId;
+    const addresses = isDeviceControlMessage ? [toCode] : await resolveDeliveryAddresses(toCode);
+    console.log('[pushToSupabase] sending', type, 'to', toCode, '-> resolved addresses:', addresses);
+
+    const rows = addresses.map(addr => ({
+      from: myUsername, to: addr, text, type, created_at: new Date().toISOString(), ...extra
+    }));
+
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ from: myUsername, to: toCode, text, type, created_at: new Date().toISOString(), ...extra })
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=representation' },
+      body: JSON.stringify(rows)
     });
-    if (!res.ok) toast('Failed to send');
-  } catch(e) { toast('Failed to send — check connection'); }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.error('[pushToSupabase] insert FAILED', res.status, errText);
+      toast('Failed to send');
+    } else {
+      const inserted = await res.json().catch(() => null);
+      console.log('[pushToSupabase] insert OK, rows created:', inserted?.length, inserted?.map(r => r.to));
+    }
+  } catch(e) { console.error('[pushToSupabase] exception', e); toast('Failed to send — check connection'); }
+}
+
+// Raw push/poll using an explicit "from" — used during device linking,
+// before this device has a myUsername of its own. Never forked — these are
+// always addressed to a specific bare username or deviceId directly.
+async function pushRaw(fromId, toCode, text, type, extra = {}) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ from: fromId, to: toCode, text, type, created_at: new Date().toISOString(), ...extra })
+    });
+  } catch(e) {}
+}
+
+async function pollRaw(forId) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?to=eq.${encodeURIComponent(forId)}&select=*`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch(e) { return []; }
+}
+
+async function deleteMessageIds(ids) {
+  if (!ids.length) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?id=in.(${ids.join(',')})`, {
+      method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+  } catch(e) {}
 }
 
 async function pollMessages() {
   if (!myUsername) return;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?to=eq.${myUsername}&select=*`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
-    if (!res.ok) return;
-    const rows = await res.json();
+    // Poll two addresses:
+    //  1. My own device-specific address (username#deviceId) — where forked
+    //     DM/group/sticker/etc messages land, addressed only to me, no race with other devices.
+    //  2. The bare username — where device-control messages (sync_request, link_request, etc.)
+    //     and any fallback messages (sent when the sender couldn't resolve my device list) land.
+    //     Every one of my devices polls this too, but control messages already carry their
+    //     own targetDeviceId so only the intended device acts on them.
+    const myAddress = `${myUsername}#${myDeviceId}`;
+    const [ownRes, sharedRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?to=eq.${encodeURIComponent(myAddress)}&select=*`,
+        { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }),
+      fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?to=eq.${encodeURIComponent(myUsername)}&select=*`,
+        { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } })
+    ]);
+
+    const ownRows    = ownRes.ok ? await ownRes.json() : [];
+    const sharedRows = sharedRes.ok ? await sharedRes.json() : [];
+    if (ownRows.length || sharedRows.length) {
+      console.log('[pollMessages]', myAddress, 'ownRows:', ownRows.length, 'sharedRows:', sharedRows.length, sharedRows.map(r=>({id:r.id,type:r.type,target:r.targetDeviceId})));
+    }
+
+    // Shared-address rows: only keep control messages meant for this device,
+    // or anything with no targetDeviceId at all (true fallback delivery).
+    const relevantSharedRows = sharedRows.filter(r => !r.targetDeviceId || r.targetDeviceId === myDeviceId);
+
+    const rows = [...ownRows, ...relevantSharedRows];
     if (!rows.length) return;
+
     const ids = [];
     rows.forEach(r => {
       ids.push(r.id);
@@ -1328,17 +1877,77 @@ async function pollMessages() {
         } catch(e) {}
         return;
       }
+      // ── Contact sync: another of my devices added/renamed a contact ──
+      if (r.type === 'contact_sync') {
+        if (r.targetDeviceId && r.targetDeviceId !== myDeviceId) return;
+        try {
+          const { contact: rc, removed } = JSON.parse(r.text);
+          if (removed) {
+            contacts = contacts.filter(c => c.code !== rc.code);
+          } else {
+            const existing = contacts.find(c => c.code === rc.code);
+            if (!existing) contacts.push(rc);
+            else if ((rc.lastModified||0) >= (existing.lastModified||0)) Object.assign(existing, rc);
+          }
+          saveContacts();
+          renderContacts(document.getElementById('search')?.value || '');
+        } catch(e) {}
+        return;
+      }
+
+      // ── Sync request: another of my devices wants to compare/exchange data ──
+      if (r.type === 'sync_request') {
+        if (r.targetDeviceId && r.targetDeviceId !== myDeviceId) return; // not for me
+        try {
+          const manifest = JSON.parse(r.text);
+          if (manifest.deviceId === myDeviceId) return; // ignore my own request echo
+          handleSyncRequest(manifest, manifest.deviceId);
+        } catch(e) {}
+        return;
+      }
+
+      // ── Sync response: another of my devices sent back data to merge ──
+      if (r.type === 'sync_response') {
+        if (r.targetDeviceId && r.targetDeviceId !== myDeviceId) return; // not for me
+        try {
+          const response = JSON.parse(r.text);
+          applySyncResponse(response);
+        } catch(e) {}
+        return;
+      }
+
+      // ── Link request: another device wants to connect to my account ──
+      if (r.type === 'link_request') {
+        const requestingDeviceId = r.text;
+        respondToLinkRequest(myUsername, requestingDeviceId).then(code => {
+          showLinkApprovalUI(requestingDeviceId, code);
+        });
+        return;
+      }
+
+      // ── Link confirm: requesting device sent back a code to verify ──
+      if (r.type === 'link_confirm') {
+        try {
+          const { requestingDeviceId, code } = JSON.parse(r.text);
+          verifyAndApproveLinkConfirm(requestingDeviceId, code).then(ok => {
+            if (ok) toast('New device connected');
+          });
+        } catch(e) {}
+        return;
+      }
+
       const silentTypes = ['read_receipt','code_change','avatar_update','username_update','story','story_view','story_delete'];
       if (silentTypes.includes(r.type)) return;
       if (!r.text) return;
       ensureContact(r.from);
       addMessageToChat(r.from, { text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration });
     });
-    if (ids.length) {
-      await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?id=in.(${ids.join(',')})`, {
-        method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-    }
+
+    // With per-device addresses, every row this poll picked up was meant for
+    // THIS device specifically (or is a control message already filtered to
+    // this device above) — safe to delete immediately, no other device is
+    // waiting on it.
+    if (ids.length) await deleteMessageIds(ids);
   } catch(e) {}
 }
 
@@ -1414,6 +2023,47 @@ function renderStickerGrid(catId) {
   });
 }
 
+function saveReceivedSticker(url) {
+  // Avoid duplicates — check if this exact image is already saved
+  if (customStickers.some(s => s.url === url)) {
+    toast('Already in My Stickers');
+    return;
+  }
+  const sticker = { id: 'cs_' + Date.now(), name: 'Saved Sticker', url };
+  customStickers.push(sticker);
+  saveCustomStickers();
+  toast('Sticker saved to My Stickers');
+}
+
+function showStickerMenu(bubbleEl, bwrap, url) {
+  document.querySelectorAll('.sticker-tap-menu').forEach(m => m.remove());
+
+  const alreadySaved = customStickers.some(s => s.url === url);
+
+  const menu = document.createElement('div');
+  menu.className = 'sticker-tap-menu';
+  menu.innerHTML = `
+    <button class="sticker-menu-btn add-sticker-btn" ${alreadySaved ? 'disabled' : ''}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      ${alreadySaved ? 'Already Saved' : 'Add Sticker'}
+    </button>`;
+
+  if (!alreadySaved) {
+    menu.querySelector('.add-sticker-btn').addEventListener('click', () => {
+      saveReceivedSticker(url);
+      menu.remove();
+    });
+  }
+
+  bwrap.appendChild(menu);
+
+  setTimeout(() => {
+    document.addEventListener('click', function close(e) {
+      if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', close); }
+    });
+  }, 10);
+}
+
 function sendStickerMsg(s) {
   if (!activeCode) return;
   if (activeType==='group') sendGroupMessage(s.url,'sticker');
@@ -1433,7 +2083,11 @@ function closeLightbox() {
   document.body.style.overflow = '';
 }
 
-function closeAllPanels() { document.getElementById('sticker-panel').classList.remove('open'); }
+function closeAllPanels() {
+  document.getElementById('sticker-panel').classList.remove('open');
+  document.getElementById('attach-menu').classList.remove('open');
+  document.getElementById('attach-btn').classList.remove('open');
+}
 
 // ─── STORAGE ──────────────────────────────────────────────────────────────────
 function enforceStorageLimit(code) {
@@ -1481,11 +2135,12 @@ function showRenameModal(contact) {
   document.getElementById('rename-confirm').onclick = () => {
     const newName = document.getElementById('rename-input').value.trim();
     if (!newName) { toast('Name cannot be empty'); return; }
-    contact.name = newName; saveContacts();
+    contact.name = newName; contact.lastModified = Date.now(); saveContacts();
     renderContacts(document.getElementById('search').value);
     if (activeCode===contact.code) document.getElementById('chat-header-name').textContent = newName;
     document.getElementById('rename-modal').classList.remove('open');
     toast('Contact renamed');
+    pushContactUpdateToDevices(contact);
   };
 }
 
@@ -1513,12 +2168,65 @@ document.getElementById('welcome-btn').addEventListener('click', async () => {
   await setUsername(val, true);
   await registerUsername(val);
   document.getElementById('welcome-screen').style.display = 'none';
+  stopLinkingPoll();
+  await registerDevice();
   startApp();
 });
 document.getElementById('welcome-input').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('welcome-btn').click(); });
 document.getElementById('welcome-input').addEventListener('input', () => {
   document.getElementById('welcome-hint').style.color = '#8e8e93';
   document.getElementById('welcome-hint').textContent = 'No spaces. Letters, numbers and _ only.';
+});
+
+// ─── DEVICE LINKING UI ──────────────────────────────────────────────────────────
+document.getElementById('welcome-connect-link').addEventListener('click', () => {
+  document.getElementById('link-step-username').style.display = 'block';
+  document.getElementById('link-step-code').style.display = 'none';
+  document.getElementById('link-username-input').value = '';
+  document.getElementById('link-modal').classList.add('open');
+  document.getElementById('link-username-input').focus();
+});
+
+let pendingLinkTarget = '';
+
+document.getElementById('link-cancel-1').addEventListener('click', () => document.getElementById('link-modal').classList.remove('open'));
+document.getElementById('link-cancel-2').addEventListener('click', () => document.getElementById('link-modal').classList.remove('open'));
+document.getElementById('link-modal').addEventListener('click', e => { if (e.target === document.getElementById('link-modal')) document.getElementById('link-modal').classList.remove('open'); });
+
+document.getElementById('link-send-request').addEventListener('click', async () => {
+  const target = document.getElementById('link-username-input').value.trim();
+  if (!validateUsername(target)) { toast('Enter a valid username'); return; }
+  const btn = document.getElementById('link-send-request');
+  btn.disabled = true; btn.textContent = 'Sending...';
+  await sendLinkRequest(target, myDeviceId);
+  btn.disabled = false; btn.textContent = 'Send Request';
+  pendingLinkTarget = target;
+  document.getElementById('link-step-username').style.display = 'none';
+  document.getElementById('link-step-code').style.display = 'block';
+  document.getElementById('link-code-input').value = '';
+  document.getElementById('link-code-input').focus();
+});
+
+document.getElementById('link-submit-code').addEventListener('click', async () => {
+  const code = document.getElementById('link-code-input').value.trim();
+  if (!/^\d{6}$/.test(code)) { toast('Enter the 6-digit code'); return; }
+  const btn = document.getElementById('link-submit-code');
+  btn.disabled = true; btn.textContent = 'Connecting...';
+  await submitLinkCode(pendingLinkTarget, myDeviceId, code);
+  setTimeout(() => { btn.disabled = false; btn.textContent = 'Connect'; }, 3000);
+});
+
+document.getElementById('link-code-input').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('link-submit-code').click(); });
+
+document.getElementById('link-approval-dismiss').addEventListener('click', () => {
+  document.getElementById('link-approval-overlay').classList.remove('open');
+});
+
+// Settings — manual sync trigger
+document.getElementById('settings-sync-btn').addEventListener('click', async () => {
+  document.getElementById('settings-overlay').classList.remove('open');
+  toast('Checking for other devices...');
+  await requestSync(true);
 });
 
 // Story editor
@@ -1609,10 +2317,28 @@ document.getElementById('settings-remove-story').addEventListener('click', () =>
 });
 
 // Remove account
-document.getElementById('settings-remove-account').addEventListener('click', () => {
+document.getElementById('settings-remove-account').addEventListener('click', async () => {
   document.getElementById('settings-overlay').classList.remove('open');
-  const countdown  = document.getElementById('remove-account-countdown');
+
+  const others = await getMyOtherDevices();
+  const isLastDevice = others.length === 0;
+
+  const title = document.getElementById('remove-account-title');
+  const body  = document.getElementById('remove-account-body');
   const confirmBtn = document.getElementById('remove-account-confirm');
+
+  if (isLastDevice) {
+    title.textContent = '⚠️ Remove Account';
+    body.textContent = 'This will permanently delete your username and erase all your messages, contacts, and data from this device. This cannot be undone.';
+    confirmBtn.textContent = 'Delete Everything';
+  } else {
+    title.textContent = '⚠️ Remove This Device';
+    body.textContent = `This will remove this device from your account and erase its local data. @${myUsername} will remain active on your other ${others.length > 1 ? 'devices' : 'device'}.`;
+    confirmBtn.textContent = 'Remove This Device';
+  }
+  document.getElementById('remove-account-modal').dataset.isLastDevice = isLastDevice ? '1' : '0';
+
+  const countdown  = document.getElementById('remove-account-countdown');
   countdown.textContent = '3';
   confirmBtn.disabled = true;
   confirmBtn.style.opacity = '0.4';
@@ -1642,7 +2368,14 @@ document.getElementById('remove-account-modal').addEventListener('click', e => {
   }
 });
 document.getElementById('remove-account-confirm').addEventListener('click', async () => {
-  await releaseUsername(myUsername);
+  const isLastDevice = document.getElementById('remove-account-modal').dataset.isLastDevice === '1';
+  if (isLastDevice) {
+    // Only device on this account — full teardown, same as before.
+    await releaseUsername(myUsername);
+  }
+  // Either way, this device's own registration should be removed so other
+  // devices stop trying to fork messages to an address that no longer exists.
+  await unregisterThisDevice();
   localStorage.clear();
   window.location.reload();
 });
@@ -1759,9 +2492,10 @@ document.getElementById('modal-add').addEventListener('click', () => {
   if(!name||!code){toast('Fill in both fields');return;}
   if(code===myUsername){toast("That's your own username");return;}
   if(contacts.find(c=>c.code===code)){toast('Contact already exists');return;}
-  contacts.push({name,code}); saveContacts(); renderContacts();
+  contacts.push({name,code,lastModified:Date.now()}); saveContacts(); renderContacts();
   document.getElementById('modal').classList.remove('open');
   toast(`${name} added`); openChat(code);
+  pushContactUpdateToDevices(contacts[contacts.length - 1]);
 });
 
 // New group
@@ -1790,7 +2524,23 @@ document.getElementById('search').addEventListener('input', e=>renderContacts(e.
 document.getElementById('back-btn').addEventListener('click', showSidebar);
 
 // Image
-document.getElementById('image-btn').addEventListener('click', ()=>{closeAllPanels();document.getElementById('image-file-input').click();});
+document.getElementById('attach-btn').addEventListener('click', () => {
+  const menu = document.getElementById('attach-menu');
+  const wasOpen = menu.classList.contains('open');
+  closeAllPanels();
+  if (!wasOpen) {
+    menu.classList.add('open');
+    document.getElementById('attach-btn').classList.add('open');
+  }
+});
+document.getElementById('attach-photo-btn').addEventListener('click', () => {
+  closeAllPanels();
+  document.getElementById('image-file-input').click();
+});
+document.getElementById('attach-file-btn').addEventListener('click', () => {
+  closeAllPanels();
+  document.getElementById('generic-file-input').click();
+});
 document.getElementById('image-file-input').addEventListener('change', async e=>{
   const file=e.target.files[0];e.target.value='';
   if(!file||!activeCode)return;
@@ -1803,6 +2553,39 @@ document.getElementById('image-file-input').addEventListener('change', async e=>
     toast(`Sent · ${sizeKB}KB`);
   }catch(err){toast('Failed to compress image');}
 });
+
+document.getElementById('generic-file-input').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file || !activeCode) return;
+  if (file.size > MAX_FILE_BYTES) {
+    toast(`File too large — max ${Math.round(MAX_FILE_BYTES/1024)}KB`);
+    return;
+  }
+  toast('Sending file...');
+  try {
+    const base64 = await fileToBase64(file);
+    const sizeKB = Math.round(file.size / 1024);
+    const fileData = JSON.stringify({ name: file.name, size: file.size, data: base64 });
+    if (activeType === 'group') {
+      await sendGroupMessage(fileData, 'file');
+    } else {
+      addMessageToChat(activeCode, { text: fileData, time: Date.now(), sent: true, read: true, type: 'file' });
+      await pushToSupabase(activeCode, fileData, 'file');
+    }
+    toast(`Sent · ${sizeKB}KB`);
+  } catch(err) {
+    toast('Failed to send file');
+  }
+});
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 // Stickers
 document.getElementById('create-sticker-btn').addEventListener('click', ()=>document.getElementById('sticker-file-input').click());
