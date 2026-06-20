@@ -54,7 +54,7 @@ input, textarea, select {
 #splash {
   position: fixed; inset: 0; background: #000;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  z-index: 999; gap: 16px;
+  z-index: 50; gap: 16px;
   animation: splashFade 0.4s ease 1.8s forwards;
 }
 #splash-logo { display: flex; align-items: center; gap: 12px; animation: splashIn 0.6s cubic-bezier(0.34,1.56,0.64,1) 0.2s both; }
@@ -156,7 +156,8 @@ body {
 .bubble.image-bubble img:hover { opacity: 0.9; }
 
 .bubble.sticker-bubble { padding: 0; background: transparent !important; }
-.bubble.sticker-bubble img { width: 100px; height: 100px; display: block; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3)); animation: stickerPop 0.3s cubic-bezier(0.34,1.56,0.64,1); }
+.bubble.sticker-bubble img { width: 100px; height: 100px; display: block; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3)); animation: stickerPop 0.3s cubic-bezier(0.34,1.56,0.64,1); transition: transform 0.12s; }
+.msg-row.received .bubble.sticker-bubble:active img { transform: scale(0.9); }
 @keyframes stickerPop { from { opacity:0; transform:scale(0.5) rotate(-10deg); } to { opacity:1; transform:scale(1) rotate(0deg); } }
 
 /* REACTIONS */
@@ -211,7 +212,7 @@ body {
 .sticker-fav-btn.active { color: #fbbf24; display: flex; }
 
 /* MODAL */
-.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
 .modal-overlay.open { display: flex; }
 .modal { background: var(--modal-bg); border-radius: 16px; padding: 24px; width: 320px; display: flex; flex-direction: column; gap: 16px; animation: modalIn 0.25s cubic-bezier(0.34,1.56,0.64,1); }
 @keyframes modalIn { from { opacity:0; transform:scale(0.9) translateY(10px); } to { opacity:1; transform:scale(1) translateY(0); } }
@@ -267,6 +268,27 @@ body {
 .msg-row.received .msg-meta { flex-direction: row; }
 .msg-time-label { font-size: 10px; color: var(--text-secondary); margin-left: auto; }
 .msg-seen { font-size: 10px; color: var(--text-secondary); margin-right: auto; }
+
+/* STICKER TAP MENU */
+.sticker-tap-menu {
+  position: absolute; z-index: 50;
+  bottom: calc(100% + 8px);
+  background: #2c2c2e; border-radius: 14px;
+  padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  animation: pickerIn 0.18s cubic-bezier(0.34,1.56,0.64,1);
+}
+.msg-row.received .sticker-tap-menu { left: 0; }
+.msg-row.sent .sticker-tap-menu { right: 0; }
+.sticker-menu-btn {
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: none; color: var(--text-primary);
+  font-size: 13px; padding: 9px 14px; border-radius: 10px;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+  transition: background 0.15s;
+}
+.sticker-menu-btn:hover:not(:disabled) { background: var(--contact-active); }
+.sticker-menu-btn:disabled { opacity: 0.5; cursor: default; }
+.sticker-menu-btn svg { width: 15px; height: 15px; color: #2563eb; flex-shrink: 0; }
 
 /* TOAST */
 #toast { position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%) translateY(20px); background: #3a3a3c; color: #fff; padding: 10px 20px; border-radius: 20px; font-size: 14px; opacity: 0; transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 200; }
@@ -737,3 +759,69 @@ body {
 }
 .voice-wave-bar span.played { opacity: 1; }
 .voice-duration { font-size: 11px; opacity: 0.8; flex-shrink: 0; }
+
+/* ATTACH BUTTON + MENU */
+#attach-btn svg { transition: transform 0.2s; }
+#attach-btn.open svg { transform: rotate(45deg); }
+
+#attach-menu {
+  display: none; position: absolute; bottom: 100%; left: 16px;
+  background: #2c2c2e; border-radius: 14px; padding: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4); margin-bottom: 8px;
+  flex-direction: column; gap: 2px; z-index: 25;
+  animation: pickerIn 0.18s cubic-bezier(0.34,1.56,0.64,1);
+}
+#attach-menu.open { display: flex; }
+#attach-menu button {
+  display: flex; align-items: center; gap: 10px;
+  background: none; border: none; color: var(--text-primary);
+  font-size: 14px; padding: 10px 14px; border-radius: 10px;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+  transition: background 0.15s; text-align: left;
+}
+#attach-menu button:hover { background: var(--contact-active); }
+#attach-menu button svg { width: 18px; height: 18px; color: #2563eb; flex-shrink: 0; }
+
+/* FILE BUBBLE */
+.bubble.file-bubble {
+  display: flex; align-items: center; gap: 10px;
+  min-width: 200px; max-width: 260px; padding: 10px 14px;
+  cursor: pointer;
+}
+.file-icon-wrap {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: rgba(255,255,255,0.15); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.msg-row.received .file-icon-wrap { background: rgba(255,255,255,0.08); }
+.file-icon-wrap svg { width: 18px; height: 18px; }
+.file-info { flex: 1; min-width: 0; }
+.file-name {
+  font-size: 13px; font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.file-size { font-size: 11px; opacity: 0.7; margin-top: 1px; }
+
+/* CONNECT TO EXISTING ACCOUNT LINK */
+#welcome-connect-link {
+  background: none; border: none; color: #2563eb;
+  font-size: 13px; cursor: pointer; font-family: inherit;
+  padding: 4px; margin-top: 4px;
+}
+#welcome-connect-link:hover { text-decoration: underline; }
+
+/* LINK MODAL INPUTS */
+#link-username-input, #link-code-input {
+  width: 100%; background: var(--search-bg); border: 1px solid var(--input-border);
+  border-radius: 10px; padding: 10px 12px; color: var(--text-primary);
+  font-size: 15px; outline: none; font-family: inherit; margin-top: 4px;
+}
+#link-username-input:focus, #link-code-input:focus { border-color: #2563eb; }
+#link-code-input { text-align: center; font-size: 22px; letter-spacing: 6px; font-weight: 700; }
+
+/* LINK APPROVAL CODE DISPLAY */
+#link-approval-code {
+  font-size: 38px; font-weight: 700; letter-spacing: 8px;
+  text-align: center; color: #2563eb; padding: 12px 0;
+  font-family: -apple-system, monospace;
+}
