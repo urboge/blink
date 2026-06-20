@@ -181,8 +181,6 @@ async function registerDevice() {
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       console.error('registerDevice failed:', res.status, errText);
-    } else {
-      console.log('registerDevice OK:', myDeviceId, myUsername);
     }
   } catch(e) { console.error('registerDevice exception:', e); }
 }
@@ -220,6 +218,40 @@ async function getMyOtherDevices() {
     if (!res.ok) return [];
     return await res.json();
   } catch(e) { return []; }
+}
+
+// Fetches ALL devices for this account (including this one), ordered oldest
+// first. The oldest is treated as the "primary" device — the one that
+// originally created the account, before any others were linked.
+async function getAllMyDevices() {
+  if (!myUsername) return [];
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/devices?username=eq.${encodeURIComponent(myUsername)}&select=*&order=created_at.asc`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) return [];
+    return await res.json();
+  } catch(e) { return []; }
+}
+
+function isPrimaryDevice(allDevices) {
+  if (!allDevices.length) return true; // only device, or lookup failed — treat as primary
+  return allDevices[0].device_id === myDeviceId;
+}
+
+// Removes ANOTHER device's row from the devices table (used by the primary
+// device to kick a secondary off the account) and notifies that device so it
+// can wipe its own local data and return to the welcome screen.
+async function removeOtherDevice(deviceId) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${encodeURIComponent(deviceId)}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    await pushToSupabase(myUsername, '', 'device_removed', { targetDeviceId: deviceId });
+    deviceListCache.delete(myUsername); // force fresh lookup next send
+  } catch(e) {}
 }
 
 // Removes only THIS device's row from the devices table. Used when a
@@ -1692,7 +1724,6 @@ async function getDevicesForUsername(username) {
     }
     const rows = await res.json();
     const ids = rows.map(r => r.device_id);
-    console.log('getDevicesForUsername', username, '->', ids);
     deviceListCache.set(username, { devices: ids, fetchedAt: Date.now() });
     return ids;
   } catch(e) { console.error('getDevicesForUsername exception:', e); return []; }
@@ -1719,7 +1750,6 @@ async function pushToSupabase(toCode, text, type = 'text', extra = {}) {
 
     const isDeviceControlMessage = !!extra.targetDeviceId;
     const addresses = isDeviceControlMessage ? [toCode] : await resolveDeliveryAddresses(toCode);
-    console.log('[pushToSupabase] sending', type, 'to', toCode, '-> resolved addresses:', addresses);
 
     const rows = addresses.map(addr => ({
       from: myUsername, to: addr, text, type, created_at: new Date().toISOString(), ...extra
@@ -1727,16 +1757,13 @@ async function pushToSupabase(toCode, text, type = 'text', extra = {}) {
 
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=representation' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify(rows)
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       console.error('[pushToSupabase] insert FAILED', res.status, errText);
       toast('Failed to send');
-    } else {
-      const inserted = await res.json().catch(() => null);
-      console.log('[pushToSupabase] insert OK, rows created:', inserted?.length, inserted?.map(r => r.to));
     }
   } catch(e) { console.error('[pushToSupabase] exception', e); toast('Failed to send — check connection'); }
 }
@@ -1792,9 +1819,6 @@ async function pollMessages() {
 
     const ownRows    = ownRes.ok ? await ownRes.json() : [];
     const sharedRows = sharedRes.ok ? await sharedRes.json() : [];
-    if (ownRows.length || sharedRows.length) {
-      console.log('[pollMessages]', myAddress, 'ownRows:', ownRows.length, 'sharedRows:', sharedRows.length, sharedRows.map(r=>({id:r.id,type:r.type,target:r.targetDeviceId})));
-    }
 
     // Shared-address rows: only keep control messages meant for this device,
     // or anything with no targetDeviceId at all (true fallback delivery).
@@ -1913,6 +1937,14 @@ async function pollMessages() {
           const response = JSON.parse(r.text);
           applySyncResponse(response);
         } catch(e) {}
+        return;
+      }
+
+      // ── Device removed: the primary device removed this device from the account ──
+      if (r.type === 'device_removed') {
+        if (r.targetDeviceId && r.targetDeviceId !== myDeviceId) return;
+        toast('This device was removed from your account');
+        setTimeout(() => { localStorage.clear(); window.location.reload(); }, 1500);
         return;
       }
 
@@ -2380,7 +2412,7 @@ document.getElementById('remove-account-confirm').addEventListener('click', asyn
   window.location.reload();
 });
 
-document.getElementById('settings-btn').addEventListener('click', () => {
+document.getElementById('settings-btn').addEventListener('click', async () => {
   try { document.getElementById('settings-username-val').textContent = '@' + myUsername; } catch(e) {}
   try { updateMyAvatarUI(); } catch(e) {}
   try { updateNotificationToggleUI(); } catch(e) {}
@@ -2389,9 +2421,50 @@ document.getElementById('settings-btn').addEventListener('click', () => {
     if (removeStoryBtn) removeStoryBtn.style.display = myStory ? 'block' : 'none';
   } catch(e) {}
   document.getElementById('settings-overlay').classList.add('open');
+  renderManageDevicesSection();
 });
 document.getElementById('settings-close').addEventListener('click', () => document.getElementById('settings-overlay').classList.remove('open'));
 document.getElementById('settings-overlay').addEventListener('click', e => { if(e.target===document.getElementById('settings-overlay')) document.getElementById('settings-overlay').classList.remove('open'); });
+
+async function renderManageDevicesSection() {
+  const section = document.getElementById('manage-devices-section');
+  const list = document.getElementById('manage-devices-list');
+  if (!section || !list) return;
+
+  const allDevices = await getAllMyDevices();
+  const amPrimary = isPrimaryDevice(allDevices);
+
+  if (!amPrimary || allDevices.length <= 1) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = 'block';
+  list.innerHTML = '';
+  allDevices.forEach((dev, idx) => {
+    const isMe = dev.device_id === myDeviceId;
+    const isPrimaryRow = idx === 0;
+    const row = document.createElement('div');
+    row.className = 'device-row';
+    const lastSeenStr = formatTime(new Date(dev.last_seen).getTime());
+    row.innerHTML = `
+      <div class="device-row-info">
+        <div class="device-row-label">${escHtml(dev.device_label || 'Device')}${isPrimaryRow ? ' · Primary' : ''}${isMe ? ' (this device)' : ''}</div>
+        <div class="device-row-seen">Last active ${lastSeenStr}</div>
+      </div>
+      ${!isMe ? `<button class="device-remove-btn" data-id="${dev.device_id}">Remove</button>` : ''}
+    `;
+    if (!isMe) {
+      row.querySelector('.device-remove-btn').addEventListener('click', async () => {
+        if (!confirm(`Remove "${dev.device_label || 'this device'}" from your account?`)) return;
+        await removeOtherDevice(dev.device_id);
+        toast('Device removed');
+        renderManageDevicesSection();
+      });
+    }
+    list.appendChild(row);
+  });
+}
 
 // Notifications toggle
 document.getElementById('notif-toggle').addEventListener('change', async e => {
