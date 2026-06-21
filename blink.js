@@ -34,7 +34,16 @@ let selectedContacts = new Set();
 // Device identity / sync
 let myDeviceId       = '';
 let lastSyncCheckin  = 0;
-const DEVICE_CHECKIN_INTERVAL = 60 * 1000; // ping last_seen every 60s while app open
+const DEVICE_CHECKIN_INTERVAL = 60 * 1000;
+
+// Blink camera / snap state
+let cameraStream      = null;
+let usingFrontCamera  = true;
+let capturedSnapData  = null; // base64 of the captured photo, pre-send
+let snapSelectedRecipients = new Set();
+let streaks           = {}; // { contactCode: { count, lastSentDate, lastReceivedDate } }
+const SNAP_VIEW_SECONDS = 5;
+const MAX_SNAP_BYTES = 150 * 1024; // one-time Blink photos, slightly larger than chat images since they're ephemeral
 
 // Voice recording state
 let mediaRecorder     = null;
@@ -65,6 +74,7 @@ function saveCustomStickers() { ls('customStickers', JSON.stringify(customSticke
 function saveAvatars()        { ls('avatars',        JSON.stringify(avatars)); }
 function saveStories()        { ls('stories',        JSON.stringify(stories)); }
 function saveMyStory()        { ls('myStory',        JSON.stringify(myStory)); }
+function saveStreaks()        { ls('streaks',        JSON.stringify(streaks)); }
 
 const STORY_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const MAX_STORY_BYTES = 120 * 1024;
@@ -415,6 +425,7 @@ async function startApp() {
   myAvatar       = ls('myAvatar') || '';
   stories        = JSON.parse(ls('stories')        || '{}');
   myStory        = JSON.parse(ls('myStory')        || 'null');
+  streaks        = JSON.parse(ls('streaks')        || '{}');
   notificationsOn = ls('notificationsOn') !== 'false';
   updateMyAvatarUI();
   cleanExpiredImages();
@@ -885,13 +896,14 @@ async function sendVoiceMessage() {
   if (!recordedBlob || !activeCode) return;
   const base64 = await blobToBase64(recordedBlob);
   const sizeKB = Math.round((base64.length * 3/4) / 1024);
-  const msg = { text: base64, time: Date.now(), sent: true, read: true, type: 'voice', duration: recordedDuration };
+  const msgId = generateMsgId();
+  const msg = { msgId, text: base64, time: Date.now(), sent: true, read: true, type: 'voice', duration: recordedDuration };
 
   if (activeType === 'group') {
-    await sendGroupMessage(base64, 'voice', { duration: recordedDuration });
+    await sendGroupMessage(base64, 'voice', { msgId, duration: recordedDuration });
   } else {
     addMessageToChat(activeCode, msg);
-    await pushToSupabase(activeCode, base64, 'voice', { duration: recordedDuration });
+    await pushToSupabase(activeCode, base64, 'voice', { msgId, duration: recordedDuration });
   }
 
   hideVoicePreview();
@@ -899,6 +911,285 @@ async function sendVoiceMessage() {
 }
 
 
+// ─── BLINK CAMERA / SNAP ENGINE ─────────────────────────────────────────────────
+
+let replyLockedRecipient = null; // when set, sending a snap skips the picker and goes straight to this contact
+
+async function openBlinkCamera() {
+  replyLockedRecipient = null;
+  document.getElementById('blink-camera-reply-label').style.display = 'none';
+  document.getElementById('blink-camera-overlay').classList.add('open');
+  await startCameraStream();
+}
+
+async function openBlinkCameraForReply(contactCode) {
+  replyLockedRecipient = contactCode;
+  const contact = contacts.find(c => c.code === contactCode);
+  const label = document.getElementById('blink-camera-reply-label');
+  label.textContent = `Replying to ${contact?.name || contactCode}`;
+  label.style.display = 'block';
+  document.getElementById('blink-camera-overlay').classList.add('open');
+  await startCameraStream(usingFrontCamera ? 'user' : 'environment');
+}
+
+async function startCameraStream(facingMode = 'user') {
+  stopCameraStream();
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode, width: { ideal: 1280 }, height: { ideal: 1280 } },
+      audio: false
+    });
+    const video = document.getElementById('blink-camera-video');
+    video.srcObject = cameraStream;
+    video.classList.toggle('back-camera', facingMode === 'environment');
+  } catch(e) {
+    toast('Camera access denied or unavailable');
+    closeBlinkCamera();
+  }
+}
+
+function stopCameraStream() {
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+}
+
+function closeBlinkCamera() {
+  stopCameraStream();
+  document.getElementById('blink-camera-overlay').classList.remove('open');
+  document.getElementById('blink-camera-video').style.display = 'block';
+  document.getElementById('blink-camera-preview').style.display = 'none';
+  document.getElementById('blink-camera-bottom').style.display = 'flex';
+  document.getElementById('blink-camera-preview-bottom').classList.remove('show');
+  document.getElementById('blink-camera-reply-label').style.display = 'none';
+  capturedSnapData = null;
+  replyLockedRecipient = null;
+}
+
+async function flipCamera() {
+  usingFrontCamera = !usingFrontCamera;
+  await startCameraStream(usingFrontCamera ? 'user' : 'environment');
+}
+
+function captureSnapPhoto() {
+  const video = document.getElementById('blink-camera-video');
+  const canvas = document.getElementById('blink-camera-canvas');
+  const srcW = video.videoWidth, srcH = video.videoHeight;
+
+  // Always output a vertical 9:16 photo, regardless of whether the camera's
+  // native feed is landscape (laptops/webcams) or portrait (phones).
+  const targetRatio = 9 / 16; // width / height
+  let cropW, cropH;
+  if (srcW / srcH > targetRatio) {
+    // Source is wider than target — crop the sides
+    cropH = srcH;
+    cropW = srcH * targetRatio;
+  } else {
+    // Source is taller/narrower than target — crop top/bottom
+    cropW = srcW;
+    cropH = srcW / targetRatio;
+  }
+  const cropX = (srcW - cropW) / 2;
+  const cropY = (srcH - cropH) / 2;
+
+  // Render at a fixed portrait resolution for consistent output size
+  const outW = 1080, outH = 1920;
+  canvas.width = outW; canvas.height = outH;
+  const ctx = canvas.getContext('2d');
+
+  if (usingFrontCamera) {
+    // Mirror to match what the user sees in the preview
+    ctx.translate(outW, 0); ctx.scale(-1, 1);
+  }
+  ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, outW, outH);
+
+  canvas.toBlob(async blob => {
+    if (!blob) { toast('Capture failed'); return; }
+    const file = new File([blob], 'snap.jpg', { type: 'image/jpeg' });
+    try {
+      capturedSnapData = await compressImage(file, MAX_SNAP_BYTES, 1080, 0.85);
+      showSnapPreview(capturedSnapData);
+    } catch(e) { toast('Failed to process photo'); }
+  }, 'image/jpeg', 0.92);
+}
+
+function showSnapPreview(dataUrl) {
+  stopCameraStream();
+  const video = document.getElementById('blink-camera-video');
+  const preview = document.getElementById('blink-camera-preview');
+  video.style.display = 'none';
+  preview.src = dataUrl;
+  preview.style.display = 'block';
+  document.getElementById('blink-camera-bottom').style.display = 'none';
+  document.getElementById('blink-camera-preview-bottom').classList.add('show');
+}
+
+async function retakeSnap() {
+  capturedSnapData = null;
+  document.getElementById('blink-camera-preview').style.display = 'none';
+  document.getElementById('blink-camera-video').style.display = 'block';
+  document.getElementById('blink-camera-bottom').style.display = 'flex';
+  document.getElementById('blink-camera-preview-bottom').classList.remove('show');
+  await startCameraStream(usingFrontCamera ? 'user' : 'environment');
+}
+
+function openSnapSendToPicker() {
+  if (!capturedSnapData) return;
+
+  // Replying to a specific snap — skip the picker entirely, send straight back.
+  if (replyLockedRecipient) {
+    sendSnapToRecipients([replyLockedRecipient]);
+    return;
+  }
+
+  snapSelectedRecipients.clear();
+  const list = document.getElementById('snap-sendto-list');
+  list.innerHTML = '';
+  if (!contacts.length) {
+    list.innerHTML = '<div style="color:#8e8e93;font-size:13px;padding:8px 0">Add contacts first</div>';
+  } else {
+    contacts.forEach(c => {
+      const streak = streaks[c.code];
+      const row = document.createElement('div');
+      row.className = 'snap-recipient-row';
+      row.innerHTML = `
+        <div class="snap-recipient-checkbox"></div>
+        <div class="avatar ${getAvatar(c.code) ? 'avatar-img' : avatarColor(c.code)}" style="width:32px;height:32px;font-size:13px">${getAvatar(c.code) ? `<img src="${getAvatar(c.code)}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;">` : avatarLetter(c.name)}</div>
+        <div class="snap-recipient-name">${escHtml(c.name)}</div>
+        ${streak && streak.count > 0 ? `<div class="snap-streak">🔥${streak.count}</div>` : ''}
+      `;
+      row.addEventListener('click', () => {
+        if (snapSelectedRecipients.has(c.code)) snapSelectedRecipients.delete(c.code);
+        else snapSelectedRecipients.add(c.code);
+        row.classList.toggle('selected');
+        row.querySelector('.snap-recipient-checkbox').classList.toggle('checked');
+        document.getElementById('snap-sendto-confirm').disabled = snapSelectedRecipients.size === 0;
+      });
+      list.appendChild(row);
+    });
+  }
+  document.getElementById('snap-sendto-confirm').disabled = true;
+  document.getElementById('snap-sendto-modal').classList.add('open');
+}
+
+async function sendSnapToSelected() {
+  if (!capturedSnapData || !snapSelectedRecipients.size) return;
+  await sendSnapToRecipients([...snapSelectedRecipients]);
+}
+
+async function sendSnapToRecipients(recipients) {
+  if (!capturedSnapData || !recipients.length) return;
+  const btn = document.getElementById('snap-sendto-confirm');
+  const wasPickerOpen = document.getElementById('snap-sendto-modal').classList.contains('open');
+  if (wasPickerOpen) { btn.disabled = true; btn.textContent = 'Sending...'; }
+  else { toast('Sending Blink...'); }
+
+  for (const code of recipients) {
+    const snapId = 'snap_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const msg = { snapId, text: capturedSnapData, time: Date.now(), sent: true, read: true, type: 'snap', opened: false, viewedByRecipient: false };
+    addMessageToChat(code, msg);
+    await pushToSupabase(code, capturedSnapData, 'snap', { snapId });
+    recordSnapSentFor(code);
+  }
+
+  if (wasPickerOpen) {
+    btn.disabled = false; btn.textContent = 'Send';
+    document.getElementById('snap-sendto-modal').classList.remove('open');
+  }
+  replyLockedRecipient = null;
+  closeBlinkCamera();
+  toast(`Sent to ${recipients.length} ${recipients.length === 1 ? 'person' : 'people'}`);
+}
+
+// ─── STREAKS ──────────────────────────────────────────────────────────────────
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function yesterdayStr() { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); }
+
+function recordSnapSentFor(code) {
+  if (!streaks[code]) streaks[code] = { count: 0, lastSentDate: null, lastReceivedDate: null };
+  streaks[code].lastSentDate = todayStr();
+  evaluateStreak(code);
+  saveStreaks();
+}
+
+function recordSnapReceivedFrom(code) {
+  if (!streaks[code]) streaks[code] = { count: 0, lastSentDate: null, lastReceivedDate: null };
+  streaks[code].lastReceivedDate = todayStr();
+  evaluateStreak(code);
+  saveStreaks();
+}
+
+// A streak day completes once BOTH sides have sent a snap on the same day.
+// If a full day passes without both sides snapping, the streak resets.
+function evaluateStreak(code) {
+  const s = streaks[code];
+  if (!s) return;
+  const today = todayStr();
+  const yesterday = yesterdayStr();
+
+  const bothToday = s.lastSentDate === today && s.lastReceivedDate === today;
+  if (bothToday && s.lastCountedDate !== today) {
+    // Only increment once per day, and only if the streak wasn't already broken
+    const wasActiveYesterday = s.lastCountedDate === yesterday;
+    s.count = (wasActiveYesterday || s.count === 0) ? (s.count + 1 || 1) : 1;
+    s.lastCountedDate = today;
+  } else if (s.lastCountedDate && s.lastCountedDate !== today && s.lastCountedDate !== yesterday) {
+    // More than a day has passed since the streak last advanced — broken
+    s.count = 0;
+    s.lastCountedDate = null;
+  }
+}
+
+function openSnapViewerByMessage(chatCode, msg) {
+  if (!msg || msg.type !== 'snap' || msg.opened) return;
+
+  document.getElementById('snap-viewer-img').src = msg.text;
+  document.getElementById('snap-viewer').classList.add('open');
+
+  const fill = document.getElementById('snap-viewer-progress-fill');
+  fill.style.transition = 'none';
+  fill.style.width = '0%';
+  requestAnimationFrame(() => {
+    fill.style.transition = `width ${SNAP_VIEW_SECONDS}s linear`;
+    fill.style.width = '100%';
+  });
+
+  // Notify sender that this specific snap was opened (only for received snaps)
+  if (!msg.sent) {
+    pushToSupabase(chatCode, '', 'snap_opened', { snapId: msg.snapId });
+  }
+
+  let closed = false;
+  const closeAndWipe = () => {
+    if (closed) return;
+    closed = true;
+    document.getElementById('snap-viewer').classList.remove('open');
+    document.getElementById('snap-viewer-img').src = '';
+    // Genuinely delete the image data — replace with a permanent placeholder
+    msg.text = '';
+    msg.opened = true;
+    saveChats();
+    if (activeCode === chatCode) renderMessages(chatCode, activeType);
+  };
+
+  clearTimeout(window._snapViewTimer);
+  window._snapViewTimer = setTimeout(closeAndWipe, SNAP_VIEW_SECONDS * 1000);
+
+  document.getElementById('snap-viewer-tap-area').onclick = () => {
+    clearTimeout(window._snapViewTimer);
+    closeAndWipe();
+  };
+
+  // Reply — closes the snap immediately and opens the Blink camera with this
+  // contact pre-selected as the only recipient, so the user can fire back a
+  // snap reply in one motion and keep the streak going.
+  document.getElementById('snap-viewer-reply-btn').onclick = e => {
+    e.stopPropagation();
+    clearTimeout(window._snapViewTimer);
+    closeAndWipe();
+    openBlinkCameraForReply(chatCode);
+  };
+}
+
+// ─── STORIES ──────────────────────────────────────────────────────────────────
 function cleanExpiredStories() {
   const expiry = Date.now() - STORY_EXPIRY_MS;
   let changed = false;
@@ -1287,9 +1578,12 @@ function renderContacts(filter = '') {
       else if (last.type === 'image')   preview = '🖼 Image';
       else if (last.type === 'voice')   preview = '🎤 Voice message';
       else if (last.type === 'file')    preview = '📎 File';
+      else if (last.type === 'snap')    preview = last.opened ? '📸 Opened' : (last.sent ? '📸 Blink sent' : '📸 New Blink!');
       else if (last.type === 'group_invite') preview = '👥 Group invite';
       else preview = (last.sent ? 'You: ' : (last.senderName ? last.senderName + ': ' : '')) + last.text;
     }
+    const streakInfo = type === 'dm' ? streaks[data.code] : null;
+    const streakHtml = (streakInfo && streakInfo.count > 0) ? `<div class="contact-streak">🔥 ${streakInfo.count}</div>` : '';
     const div = document.createElement('div');
     div.className = 'contact-item' + (isActive ? ' active' : '') + (isSelected ? ' selected' : '');
     const avatarHtml = type === 'group'
@@ -1299,7 +1593,7 @@ function renderContacts(filter = '') {
       div.innerHTML = `<div class="select-circle ${isSelected?'checked':''}"></div>${avatarHtml}<div class="contact-info"><div class="contact-name">${escHtml(data.name)}</div><div class="contact-preview">${escHtml(preview)}</div></div>`;
       div.addEventListener('click', () => toggleSelectContact(id));
     } else {
-      div.innerHTML = `${avatarHtml}<div class="contact-info"><div class="contact-name">${escHtml(data.name)}</div><div class="contact-preview">${escHtml(preview)}</div></div><div class="contact-meta">${last?`<div class="contact-time">${formatTime(last.time)}</div>`:''} ${unread>0?`<div class="unread-badge">${unread}</div>`:''}</div>`;
+      div.innerHTML = `${avatarHtml}<div class="contact-info"><div class="contact-name">${escHtml(data.name)}</div><div class="contact-preview">${escHtml(preview)}</div></div><div class="contact-meta">${last?`<div class="contact-time">${formatTime(last.time)}</div>`:''}${streakHtml} ${unread>0?`<div class="unread-badge">${unread}</div>`:''}</div>`;
       div.addEventListener('click', () => type === 'group' ? openGroup(data.id) : openChat(data.code));
     }
     list.appendChild(div);
@@ -1385,7 +1679,7 @@ function openGroup(groupId) {
 function renderMessages(code, type = 'dm') {
   const wrap = document.getElementById('messages-wrap');
   wrap.innerHTML = '';
-  const msgs = (chats[code] || []).filter(m => m.text !== '__read__' && m.text !== '');
+  const msgs = (chats[code] || []).filter(m => m.text !== '__read__' && (m.text !== '' || m.type === 'snap'));
   let lastDate = null;
   msgs.forEach(m => {
     const d = new Date(m.time);
@@ -1447,6 +1741,23 @@ function renderMessages(code, type = 'dm') {
         });
       } catch(e) {
         bubble.innerHTML = '<span style="font-size:13px;opacity:0.6">📎 File unavailable</span>';
+      }
+    } else if (m.type === 'snap') {
+      const camIconSvg = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
+      if (m.sent) {
+        // For a snap I sent: show whether the recipient has viewed it yet.
+        bubble.className = 'bubble snap-bubble' + (m.viewedByRecipient ? ' opened' : '');
+        bubble.innerHTML = m.viewedByRecipient
+          ? `${camIconSvg}<span>Opened</span>`
+          : `${camIconSvg}<span>Delivered</span>`;
+      } else if (m.opened) {
+        // A snap I received and already viewed — image data is gone, just show the state.
+        bubble.className = 'bubble snap-bubble opened';
+        bubble.innerHTML = `${camIconSvg}<span>Opened</span>`;
+      } else {
+        bubble.className = 'bubble snap-bubble';
+        bubble.innerHTML = `${camIconSvg}<span>Tap to view</span>`;
+        bubble.addEventListener('click', () => openSnapViewerByMessage(code, m));
       }
     } else if (m.type === 'voice') {
       bubble.className = 'bubble voice-bubble';
@@ -1615,7 +1926,12 @@ function showReactionPicker(row, bwrap, msg, code, type) {
   REACTIONS.forEach(r => {
     const span = document.createElement('span');
     span.textContent = r;
-    span.addEventListener('click', () => { msg.reaction = msg.reaction===r?null:r; saveChats(); renderMessages(code,type); picker.remove(); });
+    span.addEventListener('click', () => {
+      const newReaction = msg.reaction === r ? null : r;
+      msg.reaction = newReaction;
+      saveChats(); renderMessages(code, type); picker.remove();
+      sendReactionUpdate(code, type, msg, newReaction);
+    });
     picker.appendChild(span);
   });
   bwrap.appendChild(picker);
@@ -1626,8 +1942,24 @@ function showReactionPicker(row, bwrap, msg, code, type) {
   }, 10);
 }
 
+// Notifies whoever else is in this chat that a reaction was added/removed on
+// a specific message, identified by its stable msgId.
+async function sendReactionUpdate(code, type, msg, reaction) {
+  if (!msg.msgId) return; // older messages from before msgId existed can't sync reactions
+  const payload = JSON.stringify({ msgId: msg.msgId, reaction });
+  if (type === 'group') {
+    const group = groups.find(g => g.id === code);
+    if (!group) return;
+    await Promise.all(group.members.filter(m => m.code !== myUsername)
+      .map(member => pushToSupabase(member.code, payload, 'reaction_update', { groupId: code })));
+  } else {
+    await pushToSupabase(code, payload, 'reaction_update');
+  }
+}
+
 // ─── ADD MESSAGE ──────────────────────────────────────────────────────────────
 function addMessageToChat(code, msg) {
+  if (!msg.msgId) msg.msgId = 'msg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   if (!chats[code]) chats[code] = [];
   chats[code].push(msg);
   enforceStorageLimit(code);
@@ -1650,7 +1982,8 @@ function addMessageToChat(code, msg) {
     const chatType = isGroup ? 'group' : 'dm';
     const chatName = isGroup ? isGroup.name : (contact?.name || code);
     const label    = isGroup ? `${sender} in ${chatName}` : chatName;
-    showNotification(label, msg.text, code, chatType);
+    const notifText = msg.type === 'snap' ? '📸 sent you a Blink' : msg.text;
+    showNotification(label, notifText, code, chatType);
   }
 }
 
@@ -1659,13 +1992,16 @@ function addSystemMessage(chatCode, text) {
 }
 
 // ─── SEND ─────────────────────────────────────────────────────────────────────
+function generateMsgId() { return 'msg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+
 async function sendMessage() {
   const input = document.getElementById('msg-input');
   const text  = input.value.trim();
   if (!text || !activeCode) return;
   const type = isImageUrl(text) ? 'image' : 'text';
-  if (activeType === 'group') await sendGroupMessage(text, type);
-  else { addMessageToChat(activeCode, { text, time: Date.now(), sent: true, read: true, type }); await pushToSupabase(activeCode, text, type); }
+  const msgId = generateMsgId();
+  if (activeType === 'group') await sendGroupMessage(text, type, { msgId });
+  else { addMessageToChat(activeCode, { msgId, text, time: Date.now(), sent: true, read: true, type }); await pushToSupabase(activeCode, text, type, { msgId }); }
   input.value = ''; input.style.height = 'auto';
   document.getElementById('send-btn').disabled = true;
 }
@@ -1890,7 +2226,7 @@ async function pollMessages() {
       if (r.groupId) {
         const group = groups.find(g => g.id === r.groupId);
         if (!group) return;
-        addMessageToChat(r.groupId, { text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.groupId===activeCode, type: r.type||'text', senderCode: r.senderCode, senderName: r.senderName, duration: r.duration });
+        addMessageToChat(r.groupId, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.groupId===activeCode, type: r.type||'text', senderCode: r.senderCode, senderName: r.senderName, duration: r.duration });
         return;
       }
       if (r.type === 'group_invite') {
@@ -1940,6 +2276,39 @@ async function pollMessages() {
         return;
       }
 
+      // ── Reaction update: someone reacted to (or un-reacted) a message ──
+      if (r.type === 'reaction_update') {
+        try {
+          const { msgId, reaction } = JSON.parse(r.text);
+          const chatKey = r.groupId || r.from;
+          const target = chats[chatKey]?.find(m => m.msgId === msgId);
+          if (target) {
+            target.reaction = reaction;
+            saveChats();
+            if (activeCode === chatKey) renderMessages(chatKey, activeType);
+          }
+        } catch(e) {}
+        return;
+      }
+
+      // ── Snap received: one-time photo ──
+      if (r.type === 'snap') {
+        ensureContact(r.from);
+        addMessageToChat(r.from, { snapId: r.snapId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: 'snap', opened: false });
+        recordSnapReceivedFrom(r.from);
+        return;
+      }
+
+      // ── Snap opened: recipient viewed a specific snap I sent ──
+      if (r.type === 'snap_opened') {
+        if (chats[r.from]) {
+          const targetSnap = chats[r.from].find(m => m.type === 'snap' && m.sent && m.snapId === r.snapId);
+          if (targetSnap) { targetSnap.viewedByRecipient = true; saveChats(); if (activeCode === r.from) renderMessages(r.from, activeType); }
+        }
+        toast((contacts.find(c=>c.code===r.from)?.name || r.from) + ' opened your Blink');
+        return;
+      }
+
       // ── Device removed: the primary device removed this device from the account ──
       if (r.type === 'device_removed') {
         if (r.targetDeviceId && r.targetDeviceId !== myDeviceId) return;
@@ -1972,7 +2341,7 @@ async function pollMessages() {
       if (silentTypes.includes(r.type)) return;
       if (!r.text) return;
       ensureContact(r.from);
-      addMessageToChat(r.from, { text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration });
+      addMessageToChat(r.from, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration });
     });
 
     // With per-device addresses, every row this poll picked up was meant for
@@ -2098,8 +2467,9 @@ function showStickerMenu(bubbleEl, bwrap, url) {
 
 function sendStickerMsg(s) {
   if (!activeCode) return;
-  if (activeType==='group') sendGroupMessage(s.url,'sticker');
-  else { addMessageToChat(activeCode,{text:s.url,time:Date.now(),sent:true,read:true,type:'sticker'}); pushToSupabase(activeCode,s.url,'sticker'); }
+  const msgId = generateMsgId();
+  if (activeType==='group') sendGroupMessage(s.url,'sticker',{msgId});
+  else { addMessageToChat(activeCode,{msgId,text:s.url,time:Date.now(),sent:true,read:true,type:'sticker'}); pushToSupabase(activeCode,s.url,'sticker',{msgId}); }
   closeAllPanels();
 }
 
@@ -2292,6 +2662,18 @@ document.getElementById('story-text-input').addEventListener('keydown', e => {
 });
 
 window.addEventListener('resize', () => { if (document.getElementById('story-editor').classList.contains('open')) renderEditorCanvas(); });
+
+// Blink Camera (Snap-style one-time photos)
+document.getElementById('blink-camera-btn').addEventListener('click', openBlinkCamera);
+document.getElementById('blink-camera-close').addEventListener('click', closeBlinkCamera);
+document.getElementById('blink-camera-flip').addEventListener('click', flipCamera);
+document.getElementById('blink-camera-shutter').addEventListener('click', captureSnapPhoto);
+document.getElementById('blink-camera-retake').addEventListener('click', retakeSnap);
+document.getElementById('blink-camera-send-btn').addEventListener('click', openSnapSendToPicker);
+
+document.getElementById('snap-sendto-cancel').addEventListener('click', () => document.getElementById('snap-sendto-modal').classList.remove('open'));
+document.getElementById('snap-sendto-modal').addEventListener('click', e => { if (e.target === document.getElementById('snap-sendto-modal')) document.getElementById('snap-sendto-modal').classList.remove('open'); });
+document.getElementById('snap-sendto-confirm').addEventListener('click', sendSnapToSelected);
 
 // Stories
 let storyPressTimer;
@@ -2621,8 +3003,9 @@ document.getElementById('image-file-input').addEventListener('change', async e=>
   try{
     const base64=await compressImage(file);
     const sizeKB=Math.round((base64.length*3/4)/1024);
-    if(activeType==='group') await sendGroupMessage(base64,'image');
-    else{addMessageToChat(activeCode,{text:base64,time:Date.now(),sent:true,read:true,type:'image'});await pushToSupabase(activeCode,base64,'image');}
+    const msgId = generateMsgId();
+    if(activeType==='group') await sendGroupMessage(base64,'image',{msgId});
+    else{addMessageToChat(activeCode,{msgId,text:base64,time:Date.now(),sent:true,read:true,type:'image'});await pushToSupabase(activeCode,base64,'image',{msgId});}
     toast(`Sent · ${sizeKB}KB`);
   }catch(err){toast('Failed to compress image');}
 });
@@ -2639,11 +3022,12 @@ document.getElementById('generic-file-input').addEventListener('change', async e
     const base64 = await fileToBase64(file);
     const sizeKB = Math.round(file.size / 1024);
     const fileData = JSON.stringify({ name: file.name, size: file.size, data: base64 });
+    const msgId = generateMsgId();
     if (activeType === 'group') {
-      await sendGroupMessage(fileData, 'file');
+      await sendGroupMessage(fileData, 'file', { msgId });
     } else {
-      addMessageToChat(activeCode, { text: fileData, time: Date.now(), sent: true, read: true, type: 'file' });
-      await pushToSupabase(activeCode, fileData, 'file');
+      addMessageToChat(activeCode, { msgId, text: fileData, time: Date.now(), sent: true, read: true, type: 'file' });
+      await pushToSupabase(activeCode, fileData, 'file', { msgId });
     }
     toast(`Sent · ${sizeKB}KB`);
   } catch(err) {
