@@ -368,6 +368,72 @@ function stopLinkingPoll() {
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
+async function fetchAppConfig() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_config?select=*`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+    if (!res.ok) return {};
+    const rows = await res.json();
+    return Object.fromEntries(rows.map(r => [r.key, r.value]));
+  } catch(e) { return {}; }
+}
+
+function showMaintenanceScreen() {
+  document.body.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:12px;text-align:center;padding:0 20px;font-family:-apple-system,sans-serif;color:#fff;background:#000;">
+      <div style="font-size:40px;">🛠️</div>
+      <h1 style="font-size:20px;">Blink is under maintenance</h1>
+      <p style="color:#8e8e93;font-size:14px;max-width:320px;">We'll be back shortly. Thanks for your patience.</p>
+    </div>`;
+}
+
+function showBroadcastBanner(message) {
+  if (!message) return;
+  const banner = document.createElement('div');
+  banner.id = 'broadcast-banner';
+  banner.style.cssText = `
+    position: relative; z-index: 50; flex-shrink: 0;
+    background: #2563eb; color: #fff; font-size: 13px; font-weight: 600;
+    text-align: center; padding: 9px 36px; line-height: 1.4;
+  `;
+  banner.textContent = message;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = `
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: #fff; opacity: 0.8;
+    font-size: 14px; cursor: pointer; padding: 4px;
+  `;
+  closeBtn.addEventListener('click', () => banner.remove());
+  banner.appendChild(closeBtn);
+
+  // Insert as a real element ABOVE the app, in normal document flow, so it
+  // pushes the sidebar/chat area down instead of floating on top of them.
+  document.body.insertBefore(banner, document.body.firstChild);
+}
+
+async function isUsernameBlacklisted(username) {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/username_blacklist?username=eq.${encodeURIComponent(username)}&select=username`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) return false;
+    const rows = await res.json();
+    return rows.length > 0;
+  } catch(e) { return false; }
+}
+
+function showBlockedScreen() {
+  document.body.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:12px;text-align:center;padding:0 20px;font-family:-apple-system,sans-serif;color:#fff;background:#000;">
+      <div style="font-size:40px;">🚫</div>
+      <h1 style="font-size:20px;">This account can't access Blink</h1>
+      <p style="color:#8e8e93;font-size:14px;max-width:320px;">If you believe this is a mistake, contact support.</p>
+    </div>`;
+}
+
 async function init() {
   // Safety net: force-remove splash from layout once its fade-out finishes,
   // regardless of CSS animation timing — guarantees it never blocks clicks.
@@ -376,10 +442,23 @@ async function init() {
     if (splashEl) splashEl.style.display = 'none';
   }, 2200);
 
+  // Check admin-controlled app config before doing anything else.
+  const config = await fetchAppConfig();
+  if (config.maintenance_mode === 'true') { showMaintenanceScreen(); return; }
+  if (config.broadcast_message) showBroadcastBanner(config.broadcast_message);
+  window._signupsDisabled = config.disable_signups === 'true';
+
   myUsername = ls('myUsername') || '';
   myDeviceId = getOrCreateDeviceId();
   const oldCode = ls('myCode');
   if (oldCode && !myUsername) ls('myCode', '');
+
+  // If this device already has an account, make sure it hasn't since been
+  // blocked — checked every time the app loads, not just at signup.
+  if (myUsername && await isUsernameBlacklisted(myUsername)) {
+    showBlockedScreen();
+    return;
+  }
 
   const appEl = document.getElementById('app');
   appEl.style.animation = 'none';
@@ -906,6 +985,7 @@ async function sendVoiceMessage() {
     addMessageToChat(activeCode, msg);
     await pushToSupabase(activeCode, base64, 'voice', { msgId, duration: recordedDuration });
   }
+  trackMessageSent('voice');
 
   hideVoicePreview();
   toast(`Voice sent · ${sizeKB}KB`);
@@ -1091,6 +1171,7 @@ async function sendSnapToRecipients(recipients) {
     await pushToSupabase(code, capturedSnapData, 'snap', { msgId, snapId });
     recordSnapSentFor(code);
   }
+  trackMessageSent('snap');
 
   if (wasPickerOpen) {
     btn.disabled = false; btn.textContent = 'Send';
@@ -2254,6 +2335,7 @@ async function sendMessage() {
     addMessageToChat(activeCode, { msgId, text, time: Date.now(), sent: true, read: true, type, replyTo });
     await pushToSupabase(activeCode, text, type, { msgId, replyTo: replyTo ? JSON.stringify(replyTo) : null });
   }
+  trackMessageSent(type);
   input.value = ''; input.style.height = 'auto';
   document.getElementById('send-btn').disabled = true;
   clearReplyTarget();
@@ -2306,6 +2388,43 @@ function joinGroup(invite) {
   renderContacts(document.getElementById('search').value);
   openGroup(invite.groupId);
   toast(`Joined "${invite.groupName}"`);
+}
+
+// ─── ADMIN STATS TRACKING ───────────────────────────────────────────────────────
+// Lightweight, fire-and-forget counters for the admin dashboard. These are
+// just numbers — no message content is ever stored — so they persist safely
+// even though the actual messages themselves expire within 24-48h.
+const STATS_CONTENT_TYPES = ['text', 'image', 'voice', 'sticker', 'file', 'snap'];
+
+async function incrementDailyStat(statName, amount = 1) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_daily_stat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify({ stat_name: statName, by_amount: amount })
+    });
+  } catch(e) { /* stats are best-effort, never block on failure */ }
+}
+
+// Call this once per genuine user-initiated send (not once per recipient
+// address) — so sending one message to a group of 5 still counts as 1.
+function trackMessageSent(type) {
+  if (!STATS_CONTENT_TYPES.includes(type)) return;
+  incrementDailyStat('messages_sent', 1);
+  trackActiveUserToday();
+}
+
+// Increments "active users" at most once per username per calendar day,
+// using a small localStorage marker to avoid over-counting repeat sends.
+function trackActiveUserToday() {
+  const today = todayStr();
+  if (ls('lastActiveStatDate') === today) return;
+  ls('lastActiveStatDate', today);
+  incrementDailyStat('active_users', 1);
+}
+
+function trackNewSignup() {
+  incrementDailyStat('new_signups', 1);
 }
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
@@ -2848,6 +2967,7 @@ function sendStickerMsg(s) {
   const msgId = generateMsgId();
   if (activeType==='group') sendGroupMessage(s.url,'sticker',{msgId});
   else { addMessageToChat(activeCode,{msgId,text:s.url,time:Date.now(),sent:true,read:true,type:'sticker'}); pushToSupabase(activeCode,s.url,'sticker',{msgId}); }
+  trackMessageSent('sticker');
   closeAllPanels();
 }
 
@@ -2928,6 +3048,11 @@ function showRenameModal(contact) {
 
 // Welcome
 document.getElementById('welcome-btn').addEventListener('click', async () => {
+  if (window._signupsDisabled) {
+    document.getElementById('welcome-hint').style.color = '#ff453a';
+    document.getElementById('welcome-hint').textContent = 'New signups are temporarily disabled.';
+    return;
+  }
   const val = document.getElementById('welcome-input').value.trim();
   if (!validateUsername(val)) {
     document.getElementById('welcome-hint').style.color = '#ff453a';
@@ -2945,8 +3070,18 @@ document.getElementById('welcome-btn').addEventListener('click', async () => {
     document.getElementById('welcome-hint').textContent = '@' + val + ' is already taken — try another.';
     return;
   }
+  if (await isUsernameBlacklisted(val)) {
+    btn.textContent = 'Get Started';
+    btn.disabled = false;
+    document.getElementById('welcome-hint').style.color = '#ff453a';
+    // Same wording as "already taken" — doesn't reveal this username is
+    // specifically blocked, just nudges toward picking something else.
+    document.getElementById('welcome-hint').textContent = '@' + val + ' is unavailable — try another.';
+    return;
+  }
   await setUsername(val, true);
   await registerUsername(val);
+  trackNewSignup();
   document.getElementById('welcome-screen').style.display = 'none';
   stopLinkingPoll();
   await registerDevice();
@@ -3384,6 +3519,7 @@ document.getElementById('image-file-input').addEventListener('change', async e=>
     const msgId = generateMsgId();
     if(activeType==='group') await sendGroupMessage(base64,'image',{msgId});
     else{addMessageToChat(activeCode,{msgId,text:base64,time:Date.now(),sent:true,read:true,type:'image'});await pushToSupabase(activeCode,base64,'image',{msgId});}
+    trackMessageSent('image');
     toast(`Sent · ${sizeKB}KB`);
   }catch(err){toast('Failed to compress image');}
 });
@@ -3407,6 +3543,7 @@ document.getElementById('generic-file-input').addEventListener('change', async e
       addMessageToChat(activeCode, { msgId, text: fileData, time: Date.now(), sent: true, read: true, type: 'file' });
       await pushToSupabase(activeCode, fileData, 'file', { msgId });
     }
+    trackMessageSent('file');
     toast(`Sent · ${sizeKB}KB`);
   } catch(err) {
     toast('Failed to send file');
