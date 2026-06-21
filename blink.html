@@ -146,6 +146,15 @@
 
     <div id="contacts-list"></div>
 
+    <!-- BLINK CAMERA BUTTON -->
+    <button id="blink-camera-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg>
+      <span>Blink it</span>
+    </button>
+
   </div><!-- /sidebar -->
 
 <!-- SETTINGS MODAL -->
@@ -452,6 +461,63 @@
   <div id="story-viewer-tap-left"></div>
   <div id="story-viewer-tap-right"></div>
   <div id="story-viewers-list"></div>
+</div>
+
+<!-- BLINK CAMERA CAPTURE -->
+<div id="blink-camera-overlay">
+  <div id="blink-camera-frame">
+    <video id="blink-camera-video" autoplay playsinline muted></video>
+    <canvas id="blink-camera-canvas" style="display:none;"></canvas>
+    <img id="blink-camera-preview" style="display:none;">
+
+    <div id="blink-camera-top">
+      <button id="blink-camera-close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <button id="blink-camera-flip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+    </div>
+
+    <div id="blink-camera-reply-label" style="display:none;"></div>
+
+    <div id="blink-camera-bottom">
+      <button id="blink-camera-shutter"><div id="blink-camera-shutter-inner"></div></button>
+    </div>
+
+    <div id="blink-camera-preview-bottom">
+      <button id="blink-camera-retake">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Retake
+      </button>
+      <button id="blink-camera-send-btn">
+        Send <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 16-8-4-8 4 8-16z"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- SEND-TO PICKER (after taking a photo) -->
+<div class="modal-overlay" id="snap-sendto-modal">
+  <div class="modal">
+    <h2>Send Blink To</h2>
+    <div id="snap-sendto-list" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;margin-top:4px;"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="snap-sendto-cancel">Cancel</button>
+      <button class="btn-add" id="snap-sendto-confirm" disabled>Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- SNAP VIEWER (one-time photo viewing) -->
+<div id="snap-viewer">
+  <div id="snap-viewer-progress"><div id="snap-viewer-progress-fill"></div></div>
+  <img id="snap-viewer-img" src="" alt="snap">
+  <div id="snap-viewer-tap-area"></div>
+  <button id="snap-viewer-reply-btn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+    Reply
+  </button>
 </div>
 
 <div id="toast"></div>
