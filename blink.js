@@ -2283,9 +2283,30 @@ async function pushToSupabase(toCode, text, type = 'text', extra = {}) {
     const isDeviceControlMessage = !!extra.targetDeviceId;
     const addresses = isDeviceControlMessage ? [toCode] : await resolveDeliveryAddresses(toCode);
 
+    // PostgREST requires every object in a bulk insert to have the exact
+    // same set of keys — so every row, real or mirrored, must explicitly
+    // include selfSync/originalTo (even if just as false/null), rather than
+    // only adding those keys on the mirror rows.
     const rows = addresses.map(addr => ({
-      from: myUsername, to: addr, text, type, created_at: new Date().toISOString(), ...extra
+      from: myUsername, to: addr, text, type, created_at: new Date().toISOString(),
+      selfSync: false, originalTo: null, ...extra
     }));
+
+    // Mirror this exact send to my OTHER devices too, so opening Blink on a
+    // second device sees the full conversation — not just what other people
+    // sent me, but everything I sent out from anywhere. Skipped for messages
+    // that are already part of the device-control channel (sync/link
+    // handshakes), since those are inherently single-device by design.
+    if (!isDeviceControlMessage) {
+      const myOtherDevices = await getMyOtherDevices();
+      myOtherDevices.forEach(dev => {
+        rows.push({
+          from: myUsername, to: `${myUsername}#${dev.device_id}`,
+          text, type, created_at: new Date().toISOString(),
+          ...extra, selfSync: true, originalTo: toCode
+        });
+      });
+    }
 
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
       method: 'POST',
@@ -2362,6 +2383,15 @@ async function pollMessages() {
     const ids = [];
     rows.forEach(r => {
       ids.push(r.id);
+
+      // ── Self-sync: this is a message I sent from ANOTHER of my own devices ──
+      // Re-route it as if it just arrived addressed to the real recipient, so
+      // it gets filed under the correct chat as something I already sent —
+      // no notification, no unread bump, just history catching up.
+      if (r.selfSync) {
+        handleSelfSyncRow(r);
+        return;
+      }
 
       if (r.type === 'story') {
         ensureContact(r.from);
@@ -2555,6 +2585,55 @@ function parseReplyTo(raw) {
   if (!raw) return null;
   if (typeof raw === 'object') return raw;
   try { return JSON.parse(raw); } catch(e) { return null; }
+}
+
+// Handles a row that's a mirror of something I sent from a different one of
+// my own devices. Re-derives the right local chat and message shape based on
+// the row's type, then files it in as already-sent — never as a fresh
+// incoming message, so it doesn't notify or bump unread counts.
+function handleSelfSyncRow(r) {
+  const chatKey = r.groupId || r.originalTo;
+  if (!chatKey) return;
+
+  // Silent/control types that have their own dedicated state — apply the
+  // same effect locally rather than re-adding them as chat messages.
+  if (r.type === 'reaction_update') {
+    try {
+      const { msgId, reaction } = JSON.parse(r.text);
+      const target = chats[chatKey]?.find(m => m.msgId === msgId);
+      if (target) {
+        if (!target.reactions) target.reactions = [];
+        target.reactions = target.reactions.filter(rx => rx.from !== myUsername);
+        if (reaction) target.reactions.push({ from: myUsername, emoji: reaction });
+        saveChats();
+        if (activeCode === chatKey) renderMessages(chatKey, activeType);
+      }
+    } catch(e) {}
+    return;
+  }
+  if (['read_receipt','story','story_delete','story_view','code_change','avatar_update','contact_sync','group_invite','snap_opened'].includes(r.type)) {
+    // These either don't apply across devices the same way, or are already
+    // covered by the regular per-device sync mechanisms — skip silently.
+    return;
+  }
+
+  if (!chats[chatKey]) chats[chatKey] = [];
+  const already = chats[chatKey].some(m => m.msgId === r.msgId);
+  if (already) return; // this device already has it locally
+
+  const msg = {
+    msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(),
+    sent: true, read: true, type: r.type || 'text',
+    duration: r.duration, replyTo: parseReplyTo(r.replyTo)
+  };
+  if (r.groupId) { msg.senderCode = myUsername; msg.senderName = myUsername; }
+
+  chats[chatKey].push(msg);
+  chats[chatKey].sort((a, b) => a.time - b.time);
+  enforceStorageLimit(chatKey);
+  saveChats();
+  if (chatKey === activeCode) renderMessages(chatKey, activeType);
+  renderContacts(document.getElementById('search')?.value || '');
 }
 
 function ensureContact(username) {
