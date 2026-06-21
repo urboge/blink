@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blink Admin</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+    background: #000; color: #fff; min-height: 100vh;
+  }
+
+  /* PASSWORD GATE */
+  #gate {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100vh; gap: 16px; padding: 0 20px;
+  }
+  #gate h1 { font-size: 22px; font-weight: 700; }
+  #gate p { color: #8e8e93; font-size: 13px; text-align: center; max-width: 320px; line-height: 1.5; }
+  #gate-input {
+    width: 280px; background: #1c1c1e; border: 1px solid #38383a;
+    border-radius: 10px; padding: 12px 14px; color: #fff; font-size: 15px;
+    text-align: center; outline: none;
+  }
+  #gate-input:focus { border-color: #2563eb; }
+  #gate-btn {
+    width: 280px; padding: 12px; background: #2563eb; border: none;
+    border-radius: 10px; color: #fff; font-size: 15px; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+  }
+  #gate-btn:hover { background: #1d4ed8; }
+  #gate-error { color: #ff453a; font-size: 13px; min-height: 16px; }
+
+  /* DASHBOARD */
+  #dashboard { display: none; max-width: 1000px; margin: 0 auto; padding: 24px 20px 60px; }
+  #dashboard.open { display: block; }
+
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+  header h1 { font-size: 22px; font-weight: 700; }
+  #refresh-btn {
+    background: #1c1c1e; border: 1px solid #38383a; color: #fff;
+    border-radius: 10px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+    font-family: inherit; display: flex; align-items: center; gap: 6px;
+  }
+  #refresh-btn:hover { background: #2c2c2e; }
+  #logout-btn {
+    background: #1c1c1e; border: 1px solid #38383a; color: #ff453a;
+    border-radius: 10px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+    font-family: inherit;
+  }
+  #logout-btn:hover { background: rgba(255,69,58,0.15); }
+
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .stat-card { background: #1c1c1e; border: 1px solid #38383a; border-radius: 14px; padding: 16px; }
+  .stat-card .label { font-size: 12px; color: #8e8e93; margin-bottom: 4px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; }
+  .stat-card .sub { font-size: 11px; color: #8e8e93; margin-top: 2px; }
+
+  section { margin-bottom: 28px; }
+  section h2 { font-size: 15px; font-weight: 700; margin-bottom: 10px; color: #8e8e93; text-transform: uppercase; letter-spacing: 0.3px; }
+
+  table { width: 100%; border-collapse: collapse; background: #1c1c1e; border-radius: 14px; overflow: hidden; }
+  th, td { padding: 10px 14px; text-align: left; font-size: 13px; border-bottom: 1px solid #2c2c2e; }
+  th { color: #8e8e93; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  tr:last-child td { border-bottom: none; }
+
+  .config-row {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #1c1c1e; border: 1px solid #38383a; border-radius: 12px;
+    padding: 12px 16px; margin-bottom: 8px;
+  }
+  .config-label { font-size: 14px; font-weight: 600; }
+  .config-desc { font-size: 12px; color: #8e8e93; margin-top: 2px; }
+  .toggle-switch { position: relative; display: inline-block; width: 46px; height: 26px; flex-shrink: 0; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; inset: 0; background: #3a3a3c; border-radius: 26px; cursor: pointer; transition: background 0.2s; }
+  .toggle-slider::before { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: transform 0.2s; }
+  .toggle-switch input:checked + .toggle-slider { background: #2563eb; }
+  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+  #broadcast-input {
+    width: 100%; background: #2c2c2e; border: 1px solid #38383a;
+    border-radius: 10px; padding: 10px 12px; color: #fff; font-size: 14px;
+    outline: none; font-family: inherit; margin-top: 8px;
+  }
+  #broadcast-save {
+    margin-top: 8px; background: #2563eb; border: none; border-radius: 10px;
+    padding: 9px 16px; color: #fff; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+  }
+  #broadcast-save:hover { background: #1d4ed8; }
+
+  #blacklist-add-row { display: flex; gap: 8px; margin-top: 8px; }
+  #blacklist-username-input, #blacklist-reason-input {
+    flex: 1; background: #2c2c2e; border: 1px solid #38383a;
+    border-radius: 10px; padding: 9px 12px; color: #fff; font-size: 14px;
+    outline: none; font-family: inherit;
+  }
+  #blacklist-username-input:focus, #blacklist-reason-input:focus { border-color: #2563eb; }
+  #blacklist-add-btn {
+    background: #ff453a; border: none; border-radius: 10px;
+    padding: 9px 16px; color: #fff; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: inherit; flex-shrink: 0;
+  }
+  #blacklist-add-btn:hover { background: #d63429; }
+
+  #blacklist-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .blacklist-row {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #1c1c1e; border: 1px solid #38383a; border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .blacklist-row-info { min-width: 0; }
+  .blacklist-username { font-size: 14px; font-weight: 700; }
+  .blacklist-reason { font-size: 12px; color: #8e8e93; margin-top: 1px; }
+  .blacklist-remove-btn {
+    background: rgba(255,69,58,0.15); color: #ff453a; border: none;
+    border-radius: 8px; padding: 6px 11px; font-size: 12px; font-weight: 600;
+    cursor: pointer; font-family: inherit; flex-shrink: 0;
+  }
+  .blacklist-remove-btn:hover { background: rgba(255,69,58,0.25); }
+
+  .empty-note { color: #8e8e93; font-size: 13px; padding: 16px; text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN GATE -->
+<div id="gate">
+  <h1>🔒 Blink Admin</h1>
+  <p>This is a basic client-side password gate, not real authentication — it keeps casual visitors out, but isn't a substitute for real access control.</p>
+  <input type="password" id="gate-input" placeholder="Password" autocomplete="current-password">
+  <button id="gate-btn">Enter</button>
+  <div id="gate-error"></div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard">
+  <header>
+    <h1>Blink Admin</h1>
+    <div style="display:flex;gap:8px;">
+      <button id="refresh-btn">⟲ Refresh</button>
+      <button id="logout-btn">Log Out</button>
+    </div>
+  </header>
+
+  <div class="stat-row" id="today-stats"></div>
+
+  <section>
+    <h2>Last 14 Days</h2>
+    <table id="stats-table">
+      <thead><tr><th>Date</th><th>Messages Sent</th><th>Active Users</th><th>New Signups</th></tr></thead>
+      <tbody id="stats-tbody"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>App Settings</h2>
+    <div id="config-list"></div>
+  </section>
+
+  <section>
+    <h2>Broadcast Message</h2>
+    <div class="config-desc">Shown to all users as a banner in the app. Leave empty to hide.</div>
+    <input type="text" id="broadcast-input" placeholder="e.g. Scheduled maintenance tonight at 10pm">
+    <button id="broadcast-save">Save Broadcast</button>
+  </section>
+
+  <section>
+    <h2>Blocked Usernames</h2>
+    <div class="config-desc">Blocked usernames can't create a new account, and if they already have one, Blink refuses to load for them.</div>
+    <div id="blacklist-add-row">
+      <input type="text" id="blacklist-username-input" placeholder="username">
+      <input type="text" id="blacklist-reason-input" placeholder="reason (optional)">
+      <button id="blacklist-add-btn">Block</button>
+    </div>
+    <div id="blacklist-list"></div>
+  </section>
+</div>
+
+<script src="admin.js"></script>
+</body>
+</html>
