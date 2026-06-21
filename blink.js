@@ -2046,7 +2046,7 @@ function hashColor(str) { let n=0; for(const c of str) n+=c.charCodeAt(0); retur
 
 // ─── REACTION PICKER ──────────────────────────────────────────────────────────
 function showReactionPicker(row, bwrap, msg, code, type) {
-  document.querySelectorAll('.reaction-picker').forEach(p => p.remove());
+  document.querySelectorAll('.reaction-picker, .msg-action-row').forEach(p => p.remove());
   if (!msg.reactions) msg.reactions = [];
   const picker = document.createElement('div');
   picker.className = 'reaction-picker';
@@ -2064,7 +2064,7 @@ function showReactionPicker(row, bwrap, msg, code, type) {
     const span = document.createElement('span');
     span.textContent = r;
     if (myExisting?.emoji === r) span.classList.add('active');
-    span.addEventListener('click', () => { applyReaction(r); picker.remove(); });
+    span.addEventListener('click', () => { applyReaction(r); closePickerAndActions(); });
     picker.appendChild(span);
   });
 
@@ -2073,17 +2073,91 @@ function showReactionPicker(row, bwrap, msg, code, type) {
   plusBtn.className = 'reaction-plus-btn';
   plusBtn.textContent = '+';
   plusBtn.addEventListener('click', () => {
-    picker.remove();
+    closePickerAndActions();
     showCustomEmojiInput(bwrap, code, type, msg, applyReaction);
   });
   picker.appendChild(plusBtn);
 
   bwrap.appendChild(picker);
+
+  // Delete is only ever offered for messages YOU sent — you have no
+  // authority to remove something someone else sent from their device, so
+  // there is no "delete" option shown at all for received messages.
+  let actionRow = null;
+  if (msg.sent) {
+    actionRow = document.createElement('div');
+    actionRow.className = 'msg-action-row';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'msg-action-btn delete';
+    deleteBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg> Delete for everyone`;
+    deleteBtn.addEventListener('click', () => {
+      closePickerAndActions();
+      confirmDeleteMessage(code, type, msg);
+    });
+    actionRow.appendChild(deleteBtn);
+    bwrap.appendChild(actionRow);
+
+    // Position the action row right above the picker using its real measured
+    // height, rather than a guessed fixed offset — stays correct even if the
+    // picker's size changes (e.g. wraps to two lines on a narrow screen).
+    requestAnimationFrame(() => {
+      const pickerHeight = picker.offsetHeight;
+      actionRow.style.bottom = `calc(100% + ${pickerHeight + 16}px)`;
+    });
+  }
+
+  function closePickerAndActions() {
+    picker.remove();
+    actionRow?.remove();
+  }
+
   setTimeout(() => {
     document.addEventListener('click', function close(e) {
-      if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', close); }
+      if (!picker.contains(e.target) && !(actionRow && actionRow.contains(e.target))) {
+        closePickerAndActions();
+        document.removeEventListener('click', close);
+      }
     });
   }, 10);
+}
+
+// Deletes a message you sent — a real "delete for everyone." Removes it from
+// your own history and notifies the other side(s) of the chat to remove
+// their copy too, identified by msgId. This is only ever reachable for
+// messages you sent — there is no path that lets you delete someone else's
+// message from their device.
+function confirmDeleteMessage(code, type, msg) {
+  if (!msg.sent || !msg.msgId) return;
+  if (!confirm('Delete this message for everyone?')) return;
+
+  removeMessageFromChat(code, msg);
+  sendDeleteMessageUpdate(code, type, msg.msgId);
+  toast('Message deleted for everyone');
+}
+
+function removeMessageFromChat(code, msg) {
+  const list = chats[code];
+  if (!list) return;
+  const idx = list.indexOf(msg);
+  if (idx === -1) return;
+  list.splice(idx, 1);
+  saveChats();
+  if (activeCode === code) renderMessages(code, activeType);
+  renderContacts(document.getElementById('search')?.value || '');
+}
+
+// Notifies whoever else is in this chat that a message I sent should be
+// removed, identified by its stable msgId — same pattern as reaction sync.
+async function sendDeleteMessageUpdate(code, type, msgId) {
+  const payload = JSON.stringify({ msgId });
+  if (type === 'group') {
+    const group = groups.find(g => g.id === code);
+    if (!group) return;
+    await Promise.all(group.members.filter(m => m.code !== myUsername)
+      .map(member => pushToSupabase(member.code, payload, 'delete_message', { groupId: code })));
+  } else {
+    await pushToSupabase(code, payload, 'delete_message');
+  }
 }
 
 // Small inline input where the user can type/paste any emoji using their
@@ -2520,6 +2594,18 @@ async function pollMessages() {
         return;
       }
 
+      // ── Delete message: the sender removed a message they sent ──
+      if (r.type === 'delete_message') {
+        try {
+          const { msgId } = JSON.parse(r.text);
+          const chatKey = r.groupId || r.from;
+          const list = chats[chatKey];
+          const target = list?.find(m => m.msgId === msgId);
+          if (target) removeMessageFromChat(chatKey, target);
+        } catch(e) {}
+        return;
+      }
+
       // ── Snap received: one-time photo ──
       if (r.type === 'snap') {
         ensureContact(r.from);
@@ -2608,6 +2694,14 @@ function handleSelfSyncRow(r) {
         saveChats();
         if (activeCode === chatKey) renderMessages(chatKey, activeType);
       }
+    } catch(e) {}
+    return;
+  }
+  if (r.type === 'delete_message') {
+    try {
+      const { msgId } = JSON.parse(r.text);
+      const target = chats[chatKey]?.find(m => m.msgId === msgId);
+      if (target) removeMessageFromChat(chatKey, target);
     } catch(e) {}
     return;
   }
