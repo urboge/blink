@@ -18,6 +18,7 @@ let contacts         = [];
 let chats            = {};
 let groups           = [];
 let activeCode       = null;
+let replyTarget      = null; // the message currently being replied to, if any
 let activeType       = 'dm';
 let stickerData      = [];
 let activeStickerCat = 'favourites';
@@ -1084,9 +1085,10 @@ async function sendSnapToRecipients(recipients) {
 
   for (const code of recipients) {
     const snapId = 'snap_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    const msg = { snapId, text: capturedSnapData, time: Date.now(), sent: true, read: true, type: 'snap', opened: false, viewedByRecipient: false };
+    const msgId = generateMsgId();
+    const msg = { msgId, snapId, text: capturedSnapData, time: Date.now(), sent: true, read: true, type: 'snap', opened: false, viewedByRecipient: false };
     addMessageToChat(code, msg);
-    await pushToSupabase(code, capturedSnapData, 'snap', { snapId });
+    await pushToSupabase(code, capturedSnapData, 'snap', { msgId, snapId });
     recordSnapSentFor(code);
   }
 
@@ -1717,6 +1719,14 @@ function renderMessages(code, type = 'dm') {
       nameLabel.style.color = `hsl(${hashColor(m.senderCode||'')}, 65%, 55%)`;
       bwrap.appendChild(nameLabel);
     }
+    if (m.replyTo) {
+      const quote = document.createElement('div');
+      quote.className = 'reply-quote';
+      const quoteAuthor = m.replyTo.quotedSender === myUsername ? 'You' : (m.replyTo.senderName || contacts.find(c=>c.code===m.replyTo.quotedSender)?.name || m.replyTo.quotedSender || code);
+      quote.innerHTML = `<div class="reply-quote-author">${escHtml(quoteAuthor)}</div><div class="reply-quote-text">${escHtml(replyPreviewText(m.replyTo))}</div>`;
+      quote.addEventListener('click', () => scrollToMessage(code, m.replyTo.msgId));
+      bwrap.appendChild(quote);
+    }
     const bubble = document.createElement('div');
     if (m.type === 'file') {
       bubble.className = 'bubble file-bubble';
@@ -1799,11 +1809,22 @@ function renderMessages(code, type = 'dm') {
       bubble.className = 'bubble';
       bubble.innerHTML = escHtml(m.text);
     }
-    if (m.reaction) {
+    if (m.reactions && m.reactions.length) {
       const badge = document.createElement('div');
       badge.className = 'reaction-badge';
-      badge.textContent = m.reaction;
-      badge.addEventListener('click', () => { m.reaction = null; saveChats(); renderMessages(code, type); });
+      // Group by emoji so repeated reactions of the same emoji show as one badge with a count
+      const grouped = {};
+      m.reactions.forEach(r => { grouped[r.emoji] = (grouped[r.emoji] || 0) + 1; });
+      badge.textContent = Object.entries(grouped).map(([emoji, count]) => count > 1 ? `${emoji}${count}` : emoji).join(' ');
+      badge.title = m.reactions.map(r => `${r.from === myUsername ? 'You' : (contacts.find(c=>c.code===r.from)?.name || r.from)} reacted ${r.emoji}`).join('\n');
+      badge.addEventListener('click', () => {
+        // Tapping the badge only removes YOUR own reaction, not everyone's
+        const hadMine = m.reactions.some(r => r.from === myUsername);
+        if (!hadMine) return;
+        m.reactions = m.reactions.filter(r => r.from !== myUsername);
+        saveChats(); renderMessages(code, type);
+        sendReactionUpdate(code, type, m, null);
+      });
       bwrap.appendChild(badge);
     }
     bwrap.insertBefore(bubble, bwrap.firstChild);
@@ -1818,6 +1839,7 @@ function renderMessages(code, type = 'dm') {
     bwrap.appendChild(meta);
 
     row.appendChild(bwrap);
+    row.dataset.msgid = m.msgId || '';
     let pressTimer;
     const startPress = () => { pressTimer = setTimeout(() => showReactionPicker(row, bwrap, m, code, type), 600); };
     const cancelPress = () => clearTimeout(pressTimer);
@@ -1828,9 +1850,113 @@ function renderMessages(code, type = 'dm') {
     bubble.addEventListener('touchend',    cancelPress);
     bubble.addEventListener('touchmove',   cancelPress, { passive: true });
     bubble.addEventListener('contextmenu', e => { e.preventDefault(); clearTimeout(pressTimer); showReactionPicker(row, bwrap, m, code, type); });
+
+    setupSwipeToReply(row, bwrap, m, code, type, cancelPress);
+
     wrap.appendChild(row);
   });
   wrap.scrollTop = wrap.scrollHeight;
+}
+
+// ─── SWIPE TO REPLY ───────────────────────────────────────────────────────────
+// Swiping a bubble left-to-right (in either direction of conversation — your
+// own messages or theirs) reveals a small reply icon and, past a threshold,
+// sets that message as the active reply target for the next thing you send.
+const SWIPE_REPLY_THRESHOLD = 60;
+
+function setupSwipeToReply(row, bwrap, msg, code, type, cancelPress) {
+  let startX = 0, startY = 0, currentX = 0, dragging = false, triggered = false;
+  const icon = document.createElement('div');
+  icon.className = 'swipe-reply-icon';
+  icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>`;
+  row.appendChild(icon);
+
+  function onStart(x, y) {
+    startX = x; startY = y; currentX = 0; dragging = true; triggered = false;
+    bwrap.style.transition = 'none';
+  }
+  function onMove(x, y) {
+    if (!dragging) return;
+    const dx = x - startX, dy = y - startY;
+    // If the gesture is more vertical than horizontal, it's a scroll, not a swipe — bail out
+    if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10 && Math.abs(currentX) < 10) { dragging = false; return; }
+    if (dx < 0) { currentX = 0; return; } // only allow left-to-right
+    currentX = Math.min(dx, 90);
+    if (currentX > 8) cancelPress?.(); // real horizontal drag — don't also trigger long-press
+    bwrap.style.transform = `translateX(${currentX}px)`;
+    icon.style.opacity = Math.min(currentX / SWIPE_REPLY_THRESHOLD, 1);
+    triggered = currentX >= SWIPE_REPLY_THRESHOLD;
+  }
+  function onEnd() {
+    if (!dragging) return;
+    dragging = false;
+    bwrap.style.transition = 'transform 0.2s ease';
+    bwrap.style.transform = 'translateX(0)';
+    icon.style.opacity = 0;
+    if (triggered) setReplyTarget(msg, code);
+  }
+
+  row.addEventListener('mousedown',  e => onStart(e.clientX, e.clientY));
+  row.addEventListener('mousemove',  e => onMove(e.clientX, e.clientY));
+  row.addEventListener('mouseup',    onEnd);
+  row.addEventListener('mouseleave', onEnd);
+  row.addEventListener('touchstart', e => { const t = e.touches[0]; onStart(t.clientX, t.clientY); }, { passive: true });
+  row.addEventListener('touchmove',  e => { const t = e.touches[0]; onMove(t.clientX, t.clientY); }, { passive: true });
+  row.addEventListener('touchend',   onEnd);
+}
+
+function replyPreviewText(replyTo) {
+  if (replyTo.type === 'image') return '🖼 Image';
+  if (replyTo.type === 'sticker') return '🎭 Sticker';
+  if (replyTo.type === 'voice') return '🎤 Voice message';
+  if (replyTo.type === 'file') return '📎 File';
+  if (replyTo.type === 'snap') return '📸 Blink';
+  return (replyTo.text || '').slice(0, 80);
+}
+
+function setReplyTarget(msg, code) {
+  // Store the ABSOLUTE sender of the quoted message (a real username), not a
+  // boolean relative to "me" — so this renders correctly on both my screen
+  // and the recipient's screen, which have opposite ideas of who "I" am.
+  const quotedSender = msg.sent ? myUsername : (msg.senderCode || code);
+  replyTarget = {
+    msgId: msg.msgId, quotedSender, text: msg.text, type: msg.type,
+    senderName: msg.senderName, code
+  };
+  renderReplyPreview();
+  document.getElementById('msg-input')?.focus();
+}
+
+function clearReplyTarget() {
+  replyTarget = null;
+  renderReplyPreview();
+}
+
+function renderReplyPreview() {
+  const bar = document.getElementById('reply-preview-bar');
+  if (!bar) return;
+  if (!replyTarget) { bar.classList.remove('show'); bar.innerHTML = ''; return; }
+  const author = replyTarget.quotedSender === myUsername ? 'You' : (replyTarget.senderName || contacts.find(c=>c.code===replyTarget.quotedSender)?.name || replyTarget.quotedSender);
+  bar.innerHTML = `
+    <div class="reply-preview-content">
+      <div class="reply-preview-author">Replying to ${escHtml(author)}</div>
+      <div class="reply-preview-text">${escHtml(replyPreviewText(replyTarget))}</div>
+    </div>
+    <button class="reply-preview-close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>`;
+  bar.classList.add('show');
+  bar.querySelector('.reply-preview-close').addEventListener('click', clearReplyTarget);
+}
+
+function scrollToMessage(code, msgId) {
+  if (!msgId) return;
+  const row = document.querySelector(`.msg-row[data-msgid="${msgId}"]`);
+  if (row) {
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.add('highlight-flash');
+    setTimeout(() => row.classList.remove('highlight-flash'), 1000);
+  }
 }
 
 function setupVoicePlayback(bubbleEl, src, duration) {
@@ -1921,19 +2047,37 @@ function hashColor(str) { let n=0; for(const c of str) n+=c.charCodeAt(0); retur
 // ─── REACTION PICKER ──────────────────────────────────────────────────────────
 function showReactionPicker(row, bwrap, msg, code, type) {
   document.querySelectorAll('.reaction-picker').forEach(p => p.remove());
+  if (!msg.reactions) msg.reactions = [];
   const picker = document.createElement('div');
   picker.className = 'reaction-picker';
+  const myExisting = msg.reactions.find(r => r.from === myUsername);
+
+  const applyReaction = (emoji) => {
+    msg.reactions = msg.reactions.filter(rx => rx.from !== myUsername);
+    const isRemoving = myExisting?.emoji === emoji;
+    if (!isRemoving) msg.reactions.push({ from: myUsername, emoji });
+    saveChats(); renderMessages(code, type);
+    sendReactionUpdate(code, type, msg, isRemoving ? null : emoji);
+  };
+
   REACTIONS.forEach(r => {
     const span = document.createElement('span');
     span.textContent = r;
-    span.addEventListener('click', () => {
-      const newReaction = msg.reaction === r ? null : r;
-      msg.reaction = newReaction;
-      saveChats(); renderMessages(code, type); picker.remove();
-      sendReactionUpdate(code, type, msg, newReaction);
-    });
+    if (myExisting?.emoji === r) span.classList.add('active');
+    span.addEventListener('click', () => { applyReaction(r); picker.remove(); });
     picker.appendChild(span);
   });
+
+  // "+" button — lets the user pick any emoji via their device's own emoji keyboard
+  const plusBtn = document.createElement('span');
+  plusBtn.className = 'reaction-plus-btn';
+  plusBtn.textContent = '+';
+  plusBtn.addEventListener('click', () => {
+    picker.remove();
+    showCustomEmojiInput(bwrap, code, type, msg, applyReaction);
+  });
+  picker.appendChild(plusBtn);
+
   bwrap.appendChild(picker);
   setTimeout(() => {
     document.addEventListener('click', function close(e) {
@@ -1942,10 +2086,39 @@ function showReactionPicker(row, bwrap, msg, code, type) {
   }, 10);
 }
 
+// Small inline input where the user can type/paste any emoji using their
+// device's native emoji keyboard (iOS/Android/Windows/Mac all have one built
+// into the system keyboard — there's no need to ship our own emoji picker).
+function showCustomEmojiInput(bwrap, code, type, msg, applyReaction) {
+  document.querySelectorAll('.custom-emoji-input-wrap').forEach(p => p.remove());
+  const wrap = document.createElement('div');
+  wrap.className = 'custom-emoji-input-wrap';
+  wrap.innerHTML = `<input type="text" class="custom-emoji-input" placeholder="😀" maxlength="8">`;
+  bwrap.appendChild(wrap);
+  const input = wrap.querySelector('input');
+  input.focus();
+
+  const commit = () => {
+    const val = input.value.trim();
+    wrap.remove();
+    if (val) applyReaction(val);
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); });
+  input.addEventListener('blur', () => setTimeout(commit, 100));
+}
+
 // Notifies whoever else is in this chat that a reaction was added/removed on
-// a specific message, identified by its stable msgId.
+// a specific message, identified by its stable msgId. Messages sent before
+// this feature existed don't have a msgId and can't sync reactions — there's
+// no reliable way to match them across sender/recipient after the fact, since
+// each side recorded its own local timestamp independently.
 async function sendReactionUpdate(code, type, msg, reaction) {
-  if (!msg.msgId) return; // older messages from before msgId existed can't sync reactions
+  // Older messages from before msgId existed get one assigned retroactively
+  // right here, so the reaction can always be applied and rendered locally.
+  // It still won't sync correctly to someone else's independently-stored copy
+  // of that same old message (they have no way to already know this ID), but
+  // it at least stops behaving like reactions are blocked entirely.
+  if (!msg.msgId) { msg.msgId = generateMsgId(); saveChats(); }
   const payload = JSON.stringify({ msgId: msg.msgId, reaction });
   if (type === 'group') {
     const group = groups.find(g => g.id === code);
@@ -2000,10 +2173,29 @@ async function sendMessage() {
   if (!text || !activeCode) return;
   const type = isImageUrl(text) ? 'image' : 'text';
   const msgId = generateMsgId();
-  if (activeType === 'group') await sendGroupMessage(text, type, { msgId });
-  else { addMessageToChat(activeCode, { msgId, text, time: Date.now(), sent: true, read: true, type }); await pushToSupabase(activeCode, text, type, { msgId }); }
+  const replyTo = buildReplyToPayload();
+  if (activeType === 'group') {
+    await sendGroupMessage(text, type, { msgId, replyTo });
+  } else {
+    addMessageToChat(activeCode, { msgId, text, time: Date.now(), sent: true, read: true, type, replyTo });
+    await pushToSupabase(activeCode, text, type, { msgId, replyTo: replyTo ? JSON.stringify(replyTo) : null });
+  }
   input.value = ''; input.style.height = 'auto';
   document.getElementById('send-btn').disabled = true;
+  clearReplyTarget();
+}
+
+// Builds the small replyTo snapshot attached to the next outgoing message,
+// based on whatever the user swiped to reply to.
+function buildReplyToPayload() {
+  if (!replyTarget) return null;
+  return {
+    msgId: replyTarget.msgId,
+    quotedSender: replyTarget.quotedSender,
+    text: replyTarget.type === 'text' ? replyTarget.text : '',
+    type: replyTarget.type,
+    senderName: replyTarget.senderName || null
+  };
 }
 
 // ─── GROUP MESSAGING ──────────────────────────────────────────────────────────
@@ -2012,8 +2204,12 @@ async function sendGroupMessage(text, type = 'text', extraData = {}) {
   if (!group) return;
   const msg = { text, time: Date.now(), sent: true, read: true, type, senderCode: myUsername, senderName: myUsername, ...extraData };
   addMessageToChat(activeCode, msg);
+  // For the network payload, replyTo (if present) needs to be a string —
+  // everything else in extraData is already string/number/boolean safe.
+  const networkExtra = { ...extraData };
+  if (networkExtra.replyTo) networkExtra.replyTo = JSON.stringify(networkExtra.replyTo);
   const promises = group.members.filter(m => m.code !== myUsername)
-    .map(member => pushToSupabase(member.code, text, type, { groupId: group.id, senderCode: myUsername, senderName: myUsername, ...extraData }));
+    .map(member => pushToSupabase(member.code, text, type, { groupId: group.id, senderCode: myUsername, senderName: myUsername, ...networkExtra }));
   await Promise.all(promises);
 }
 
@@ -2226,7 +2422,7 @@ async function pollMessages() {
       if (r.groupId) {
         const group = groups.find(g => g.id === r.groupId);
         if (!group) return;
-        addMessageToChat(r.groupId, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.groupId===activeCode, type: r.type||'text', senderCode: r.senderCode, senderName: r.senderName, duration: r.duration });
+        addMessageToChat(r.groupId, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.groupId===activeCode, type: r.type||'text', senderCode: r.senderCode, senderName: r.senderName, duration: r.duration, replyTo: parseReplyTo(r.replyTo) });
         return;
       }
       if (r.type === 'group_invite') {
@@ -2283,7 +2479,10 @@ async function pollMessages() {
           const chatKey = r.groupId || r.from;
           const target = chats[chatKey]?.find(m => m.msgId === msgId);
           if (target) {
-            target.reaction = reaction;
+            if (!target.reactions) target.reactions = [];
+            // Replace this specific person's reaction, regardless of who else has reacted
+            target.reactions = target.reactions.filter(rx => rx.from !== r.from);
+            if (reaction) target.reactions.push({ from: r.from, emoji: reaction });
             saveChats();
             if (activeCode === chatKey) renderMessages(chatKey, activeType);
           }
@@ -2294,7 +2493,7 @@ async function pollMessages() {
       // ── Snap received: one-time photo ──
       if (r.type === 'snap') {
         ensureContact(r.from);
-        addMessageToChat(r.from, { snapId: r.snapId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: 'snap', opened: false });
+        addMessageToChat(r.from, { msgId: r.msgId, snapId: r.snapId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: 'snap', opened: false });
         recordSnapReceivedFrom(r.from);
         return;
       }
@@ -2341,7 +2540,7 @@ async function pollMessages() {
       if (silentTypes.includes(r.type)) return;
       if (!r.text) return;
       ensureContact(r.from);
-      addMessageToChat(r.from, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration });
+      addMessageToChat(r.from, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration, replyTo: parseReplyTo(r.replyTo) });
     });
 
     // With per-device addresses, every row this poll picked up was meant for
@@ -2350,6 +2549,12 @@ async function pollMessages() {
     // waiting on it.
     if (ids.length) await deleteMessageIds(ids);
   } catch(e) {}
+}
+
+function parseReplyTo(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch(e) { return null; }
 }
 
 function ensureContact(username) {
