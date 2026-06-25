@@ -192,12 +192,28 @@
     </div>
     <p class="settings-note">Changing your username will notify all your contacts automatically.</p>
     <button class="settings-action-btn" id="settings-sync-btn" style="margin-top:8px;">🔄 Sync Devices</button>
+    <button class="settings-action-btn" id="settings-feedback-btn" style="margin-top:8px;">🐛 Report a Bug / Feedback</button>
     <div id="manage-devices-section" style="display:none;">
       <div class="settings-label" style="margin-top:12px;">Linked Devices</div>
       <div id="manage-devices-list"></div>
     </div>
     <button class="settings-action-btn danger" id="settings-remove-story" style="margin-top:8px; display:none;">Remove My Story</button>
     <button class="settings-action-btn danger" id="settings-remove-account" style="margin-top:8px;">Remove Account</button>
+  </div>
+</div>
+
+<!-- FEEDBACK MODAL -->
+<div class="modal-overlay" id="feedback-modal">
+  <div class="modal">
+    <h2>Report a Bug / Feedback</h2>
+    <div>
+      <label>What's going on?</label>
+      <textarea id="feedback-text" rows="4" placeholder="Describe the bug or share your feedback..." style="width:100%; background:var(--search-bg); border:1px solid var(--input-border); border-radius:10px; padding:10px 12px; color:var(--text-primary); font-size:14px; outline:none; font-family:inherit; resize:vertical; margin-top:4px;"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="feedback-cancel">Cancel</button>
+      <button class="btn-add" id="feedback-send">Send</button>
+    </div>
   </div>
 </div>
 
@@ -223,16 +239,18 @@
       <p>Select a contact to start messaging</p>
     </div>
 
-    <div id="chat-main" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
+    <div id="chat-main" style="display:none; flex:1; flex-direction:column; overflow:hidden; position:relative;">
       <div id="chat-header">
         <button id="back-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        <div class="avatar" id="chat-avatar"></div>
-        <div>
-          <div id="chat-header-name"></div>
-          <div id="chat-header-code"></div>
-          <div id="chat-header-sub" style="display:none;font-size:11px;color:#8e8e93;margin-top:1px"></div>
+        <div id="chat-header-identity">
+          <div class="avatar" id="chat-avatar"></div>
+          <div>
+            <div id="chat-header-name"></div>
+            <div id="chat-header-code"></div>
+            <div id="chat-header-sub" style="display:none;font-size:11px;color:#8e8e93;margin-top:1px;text-align:center;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+          </div>
         </div>
       </div>
 
