@@ -201,6 +201,18 @@ async function checkinDevice() {
   if (Date.now() - lastSyncCheckin < DEVICE_CHECKIN_INTERVAL) return;
   lastSyncCheckin = Date.now();
   try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${myDeviceId}&select=force_signed_out`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+    if (res.ok) {
+      const rows = await res.json();
+      if (rows[0]?.force_signed_out) {
+        // Admin forced this specific device out — wipe local data and
+        // return to the welcome screen, same as a normal "remove device."
+        localStorage.clear();
+        window.location.reload();
+        return;
+      }
+    }
     await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${myDeviceId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
@@ -416,12 +428,17 @@ function showBroadcastBanner(message) {
 async function isUsernameBlacklisted(username) {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/username_blacklist?username=eq.${encodeURIComponent(username)}&select=username`,
+      `${SUPABASE_URL}/rest/v1/username_blacklist?username=eq.${encodeURIComponent(username)}&select=username,expires_at`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
     );
     if (!res.ok) return false;
     const rows = await res.json();
-    return rows.length > 0;
+    if (!rows.length) return false;
+    const entry = rows[0];
+    // No expiry = permanent ban. If an expiry exists and has already
+    // passed, treat it as no longer blocked.
+    if (entry.expires_at && new Date(entry.expires_at) < new Date()) return false;
+    return true;
   } catch(e) { return false; }
 }
 
@@ -432,6 +449,48 @@ function showBlockedScreen() {
       <h1 style="font-size:20px;">This account can't access Blink</h1>
       <p style="color:#8e8e93;font-size:14px;max-width:320px;">If you believe this is a mistake, contact support.</p>
     </div>`;
+}
+
+// ─── CLIENT ERROR LOGGING ───────────────────────────────────────────────────────
+// Best-effort reporting of real runtime errors so they're visible in the
+// admin dashboard instead of silently failing in someone's browser with no
+// way for you to ever find out.
+async function logClientError(message, stack, context) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/client_errors`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ username: myUsername || null, message: String(message).slice(0, 500), stack: stack ? String(stack).slice(0, 2000) : null, context: context || null })
+    });
+  } catch(e) { /* never let error logging itself throw */ }
+}
+
+window.addEventListener('error', (e) => {
+  logClientError(e.message, e.error?.stack, 'window.onerror');
+});
+window.addEventListener('unhandledrejection', (e) => {
+  logClientError(e.reason?.message || String(e.reason), e.reason?.stack, 'unhandledrejection');
+});
+
+async function checkScheduledBroadcasts() {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/scheduled_broadcasts?shown=eq.false&show_at=lte.${new Date().toISOString()}&select=*`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (!rows.length) return;
+    // Show the most recent due broadcast, mark all due ones as shown so they
+    // don't repeat for this or other users once their time has passed.
+    showBroadcastBanner(rows[rows.length - 1].message);
+    const ids = rows.map(r => r.id);
+    fetch(`${SUPABASE_URL}/rest/v1/scheduled_broadcasts?id=in.(${ids.join(',')})`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ shown: true })
+    }).catch(() => {});
+  } catch(e) {}
 }
 
 async function init() {
@@ -447,6 +506,7 @@ async function init() {
   if (config.maintenance_mode === 'true') { showMaintenanceScreen(); return; }
   if (config.broadcast_message) showBroadcastBanner(config.broadcast_message);
   window._signupsDisabled = config.disable_signups === 'true';
+  checkScheduledBroadcasts();
 
   myUsername = ls('myUsername') || '';
   myDeviceId = getOrCreateDeviceId();
@@ -583,7 +643,7 @@ async function setProfilePicture(file) {
     contacts.forEach(c => pushToSupabase(c.code, payload, 'avatar_update'));
     toast('Profile picture updated');
     if (activeCode && activeType === 'dm') {
-      renderAvatarEl(document.getElementById('chat-avatar'), myUsername, myUsername, 36);
+      renderAvatarEl(document.getElementById('chat-avatar'), myUsername, myUsername, 44);
     }
     renderContacts(document.getElementById('search').value);
   } catch(e) { toast('Failed to set profile picture'); }
@@ -1716,7 +1776,7 @@ function openChat(code) {
   const av = document.getElementById('chat-avatar');
   av.className = 'avatar ' + avatarColor(code);
   av.innerHTML = avatarLetter(contact.name);
-  renderAvatarEl(av, code, contact.name, 36);
+  renderAvatarEl(av, code, contact.name, 44);
   document.getElementById('chat-header-name').textContent = contact.name;
   document.getElementById('chat-header-code').textContent = '@' + code;
   document.getElementById('chat-header-sub').style.display = 'none';
@@ -1764,7 +1824,7 @@ function renderMessages(code, type = 'dm') {
   wrap.innerHTML = '';
   const msgs = (chats[code] || []).filter(m => m.text !== '__read__' && (m.text !== '' || m.type === 'snap'));
   let lastDate = null;
-  msgs.forEach(m => {
+  msgs.forEach((m, msgIdx) => {
     const d = new Date(m.time);
     if (d.toDateString() !== lastDate) {
       const sep = document.createElement('div');
@@ -2329,6 +2389,7 @@ async function sendMessage() {
   const type = isImageUrl(text) ? 'image' : 'text';
   const msgId = generateMsgId();
   const replyTo = buildReplyToPayload();
+
   if (activeType === 'group') {
     await sendGroupMessage(text, type, { msgId, replyTo });
   } else {
@@ -2412,6 +2473,19 @@ function trackMessageSent(type) {
   if (!STATS_CONTENT_TYPES.includes(type)) return;
   incrementDailyStat('messages_sent', 1);
   trackActiveUserToday();
+  incrementUserTotal();
+}
+
+// All-time per-user message count, used for the admin leaderboard. Separate
+// from daily_stats since this needs to persist indefinitely, not reset daily.
+async function incrementUserTotal() {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_user_total`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify({ p_username: myUsername })
+    });
+  } catch(e) {}
 }
 
 // Increments "active users" at most once per username per calendar day,
@@ -2623,7 +2697,7 @@ async function pollMessages() {
           const { username, avatar } = JSON.parse(r.text);
           avatars[username] = avatar; saveAvatars();
           renderContacts(document.getElementById('search').value);
-          if (activeCode === username) renderAvatarEl(document.getElementById('chat-avatar'), username, contacts.find(c=>c.code===username)?.name||username, 36);
+          if (activeCode === username) renderAvatarEl(document.getElementById('chat-avatar'), username, contacts.find(c=>c.code===username)?.name||username, 44);
         } catch(e) {}
         return;
       }
@@ -3142,6 +3216,34 @@ document.getElementById('settings-sync-btn').addEventListener('click', async () 
   document.getElementById('settings-overlay').classList.remove('open');
   toast('Checking for other devices...');
   await requestSync(true);
+});
+
+// Feedback / bug report
+document.getElementById('settings-feedback-btn').addEventListener('click', () => {
+  document.getElementById('settings-overlay').classList.remove('open');
+  document.getElementById('feedback-text').value = '';
+  document.getElementById('feedback-modal').classList.add('open');
+  document.getElementById('feedback-text').focus();
+});
+document.getElementById('feedback-cancel').addEventListener('click', () => document.getElementById('feedback-modal').classList.remove('open'));
+document.getElementById('feedback-modal').addEventListener('click', e => { if (e.target === document.getElementById('feedback-modal')) document.getElementById('feedback-modal').classList.remove('open'); });
+document.getElementById('feedback-send').addEventListener('click', async () => {
+  const text = document.getElementById('feedback-text').value.trim();
+  if (!text) { toast('Write something first'); return; }
+  const btn = document.getElementById('feedback-send');
+  btn.disabled = true; btn.textContent = 'Sending...';
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/feedback_reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ username: myUsername, message: text })
+    });
+    document.getElementById('feedback-modal').classList.remove('open');
+    toast('Thanks — feedback sent');
+  } catch(e) {
+    toast('Failed to send feedback');
+  }
+  btn.disabled = false; btn.textContent = 'Send';
 });
 
 // Story editor
