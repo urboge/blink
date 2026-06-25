@@ -71,7 +71,11 @@ document.getElementById('logout-btn').addEventListener('click', () => {
 
 // ─── DASHBOARD DATA ───────────────────────────────────────────────────────────
 async function loadDashboard() {
-  await Promise.all([loadStats(), loadConfig(), loadBlacklist()]);
+  await Promise.all([
+    loadStats(), loadConfig(), loadBlacklist(),
+    loadLeaderboard(), loadStorageUsage(), loadClientErrors(),
+    loadFeedback(), loadScheduledBroadcasts()
+  ]);
 }
 
 document.getElementById('refresh-btn').addEventListener('click', loadDashboard);
@@ -197,22 +201,28 @@ async function loadBlacklist() {
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/username_blacklist?select=*&order=banned_at.desc`, { headers });
     const rows = res.ok ? await res.json() : [];
-    console.log('[loadBlacklist] rows:', rows);
 
     if (!rows.length) {
       list.innerHTML = `<div class="empty-note">No blocked usernames.</div>`;
       return;
     }
 
-    list.innerHTML = rows.map(r => `
-      <div class="blacklist-row">
-        <div class="blacklist-row-info">
-          <div class="blacklist-username">@${escapeHtml(r.username)}</div>
-          ${r.reason ? `<div class="blacklist-reason">${escapeHtml(r.reason)}</div>` : ''}
+    list.innerHTML = rows.map(r => {
+      const expired = r.expires_at && new Date(r.expires_at) < new Date();
+      const expiryLabel = !r.expires_at ? 'Permanent'
+        : expired ? 'Expired (will be treated as unblocked)'
+        : `Expires ${new Date(r.expires_at).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })}`;
+      return `
+        <div class="blacklist-row">
+          <div class="blacklist-row-info">
+            <div class="blacklist-username">@${escapeHtml(r.username)}</div>
+            ${r.reason ? `<div class="blacklist-reason">${escapeHtml(r.reason)}</div>` : ''}
+            <div class="blacklist-expiry">${expiryLabel}</div>
+          </div>
+          <button class="blacklist-remove-btn" data-username="${escapeHtml(r.username)}">Unblock</button>
         </div>
-        <button class="blacklist-remove-btn" data-username="${escapeHtml(r.username)}">Unblock</button>
-      </div>
-    `).join('');
+      `;
+    }).join('');
 
     list.querySelectorAll('.blacklist-remove-btn').forEach(btn => {
       btn.addEventListener('click', () => removeFromBlacklist(btn.dataset.username));
@@ -230,8 +240,11 @@ function escapeHtml(t) {
 document.getElementById('blacklist-add-btn').addEventListener('click', async () => {
   const usernameInput = document.getElementById('blacklist-username-input');
   const reasonInput = document.getElementById('blacklist-reason-input');
+  const durationSelect = document.getElementById('blacklist-duration-select');
   const username = usernameInput.value.trim().replace(/^@/, '');
   const reason = reasonInput.value.trim();
+  const durationHours = durationSelect.value ? parseFloat(durationSelect.value) : null;
+  const expiresAt = durationHours ? new Date(Date.now() + durationHours * 3600 * 1000).toISOString() : null;
 
   if (!username) return;
 
@@ -247,7 +260,7 @@ document.getElementById('blacklist-add-btn').addEventListener('click', async () 
     const res = await fetch(`${SUPABASE_URL}/rest/v1/username_blacklist`, {
       method: 'POST',
       headers: { ...headers, 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ username, reason: reason.length ? reason : null })
+      body: JSON.stringify({ username, reason: reason.length ? reason : null, expires_at: expiresAt })
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
@@ -256,6 +269,7 @@ document.getElementById('blacklist-add-btn').addEventListener('click', async () 
     }
     usernameInput.value = '';
     reasonInput.value = '';
+    durationSelect.value = '';
     loadBlacklist();
   } catch(e) { alert('Failed to block user: ' + e.message); }
 });
@@ -272,4 +286,247 @@ async function removeFromBlacklist(username) {
     });
     loadBlacklist();
   } catch(e) { alert('Failed to unblock user: ' + e.message); }
+}
+
+// ─── USER LOOKUP ──────────────────────────────────────────────────────────────
+document.getElementById('user-search-btn').addEventListener('click', lookupUser);
+document.getElementById('user-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') lookupUser(); });
+
+async function lookupUser() {
+  const input = document.getElementById('user-search-input');
+  const resultEl = document.getElementById('user-search-result');
+  const username = input.value.trim().replace(/^@/, '');
+  if (!username) return;
+
+  resultEl.innerHTML = `<div class="empty-note">Searching...</div>`;
+
+  try {
+    const [devicesRes, blacklistRes, totalsRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/devices?username=eq.${encodeURIComponent(username)}&select=*&order=created_at.asc`, { headers }),
+      fetch(`${SUPABASE_URL}/rest/v1/username_blacklist?username=eq.${encodeURIComponent(username)}&select=*`, { headers }),
+      fetch(`${SUPABASE_URL}/rest/v1/user_totals?username=eq.${encodeURIComponent(username)}&select=*`, { headers })
+    ]);
+
+    const devices = devicesRes.ok ? await devicesRes.json() : [];
+    const blacklist = blacklistRes.ok ? await blacklistRes.json() : [];
+    const totals = totalsRes.ok ? await totalsRes.json() : [];
+
+    if (!devices.length && !totals.length) {
+      resultEl.innerHTML = `<div class="empty-note">No record of @${escapeHtml(username)} — they may not have sent a message yet, or never existed.</div>`;
+      return;
+    }
+
+    const blockEntry = blacklist[0];
+    const isBlocked = blockEntry && (!blockEntry.expires_at || new Date(blockEntry.expires_at) > new Date());
+    const totalMsgs = totals[0]?.total_messages || 0;
+    const firstSeen = totals[0]?.first_seen ? new Date(totals[0].first_seen).toLocaleDateString() : 'Unknown';
+    const lastSeen = devices.length ? new Date(Math.max(...devices.map(d => new Date(d.last_seen).getTime()))).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) : 'Unknown';
+
+    resultEl.innerHTML = `
+      <div class="user-result-card">
+        <div class="user-result-row"><span class="k">Username</span><span>@${escapeHtml(username)}</span></div>
+        <div class="user-result-row"><span class="k">Status</span><span class="${isBlocked ? 'user-result-blocked' : 'user-result-ok'}">${isBlocked ? 'Blocked' : 'Active'}</span></div>
+        <div class="user-result-row"><span class="k">Total Messages Sent</span><span>${totalMsgs}</span></div>
+        <div class="user-result-row"><span class="k">First Seen</span><span>${firstSeen}</span></div>
+        <div class="user-result-row"><span class="k">Last Active</span><span>${lastSeen}</span></div>
+        <div class="user-result-row"><span class="k">Devices</span><span>${devices.length}</span></div>
+        ${devices.map(d => `
+          <div class="user-result-row" style="padding-left:12px;">
+            <span class="k">↳ ${escapeHtml(d.device_label || 'Device')}</span>
+            <span>
+              <button class="force-signout-btn" data-device="${escapeHtml(d.device_id)}">${d.force_signed_out ? 'Pending sign-out' : 'Force Sign Out'}</button>
+            </span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    resultEl.querySelectorAll('.force-signout-btn').forEach(btn => {
+      btn.addEventListener('click', () => forceSignOutDevice(btn.dataset.device, btn));
+    });
+  } catch(e) {
+    resultEl.innerHTML = `<div class="empty-note">Search failed: ${e.message}</div>`;
+  }
+}
+
+async function forceSignOutDevice(deviceId, btn) {
+  if (!confirm('Force this device to sign out? It will be logged out next time it checks in (within ~60 seconds).')) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${encodeURIComponent(deviceId)}`, {
+      method: 'PATCH',
+      headers: { ...headers, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ force_signed_out: true })
+    });
+    btn.textContent = 'Pending sign-out';
+    btn.disabled = true;
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+// ─── LEADERBOARD ──────────────────────────────────────────────────────────────
+async function loadLeaderboard() {
+  const tbody = document.getElementById('leaderboard-tbody');
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/user_totals?select=*&order=total_messages.desc&limit=15`, { headers });
+    const rows = res.ok ? await res.json() : [];
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-note">No data yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map((r, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>@${escapeHtml(r.username)}</td>
+        <td>${r.total_messages}</td>
+        <td>${new Date(r.last_seen).toLocaleDateString([], { month:'short', day:'numeric' })}</td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-note">Failed to load: ${e.message}</td></tr>`;
+  }
+}
+
+// ─── STORAGE USAGE ────────────────────────────────────────────────────────────
+async function loadStorageUsage() {
+  const el = document.getElementById('storage-stats');
+  try {
+    const tables = ['messages', 'devices', 'usernames', 'username_blacklist', 'client_errors', 'feedback_reports'];
+    const counts = await Promise.all(tables.map(async t => {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/${t}?select=*&limit=1`, {
+        headers: { ...headers, 'Prefer': 'count=exact' }
+      });
+      const count = res.headers.get('content-range')?.split('/')[1] || '?';
+      return { table: t, count };
+    }));
+    el.innerHTML = counts.map(c => `
+      <div class="stat-card">
+        <div class="label">${c.table}</div>
+        <div class="value" style="font-size:22px;">${c.count}</div>
+        <div class="sub">rows</div>
+      </div>
+    `).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="empty-note">Failed to load: ${e.message}</div>`;
+  }
+}
+
+// ─── CLIENT ERRORS ────────────────────────────────────────────────────────────
+async function loadClientErrors() {
+  const tbody = document.getElementById('errors-tbody');
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/client_errors?select=*&order=created_at.desc&limit=25`, { headers });
+    const rows = res.ok ? await res.json() : [];
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-note">No errors logged. Good sign.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${new Date(r.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })}</td>
+        <td>${r.username ? '@' + escapeHtml(r.username) : '—'}</td>
+        <td class="err-msg">${escapeHtml(r.message)}</td>
+        <td>${escapeHtml(r.context || '—')}</td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-note">Failed to load: ${e.message}</td></tr>`;
+  }
+}
+
+// ─── FEEDBACK / BUG REPORTS ────────────────────────────────────────────────────
+async function loadFeedback() {
+  const tbody = document.getElementById('feedback-tbody');
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/feedback_reports?select=*&order=created_at.desc&limit=30`, { headers });
+    const rows = res.ok ? await res.json() : [];
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-note">No feedback yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${new Date(r.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })}</td>
+        <td>${r.username ? '@' + escapeHtml(r.username) : '—'}</td>
+        <td style="max-width:320px;">${escapeHtml(r.message)}</td>
+        <td>
+          <span class="feedback-status-${r.status}">${r.status}</span>
+          ${r.status === 'open' ? `<button class="feedback-resolve-btn" data-id="${r.id}">Mark Resolved</button>` : ''}
+        </td>
+      </tr>
+    `).join('');
+    tbody.querySelectorAll('.feedback-resolve-btn').forEach(btn => {
+      btn.addEventListener('click', () => resolveFeedback(btn.dataset.id));
+    });
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-note">Failed to load: ${e.message}</td></tr>`;
+  }
+}
+
+async function resolveFeedback(id) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/feedback_reports?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: { ...headers, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ status: 'resolved' })
+    });
+    loadFeedback();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+// ─── SCHEDULED BROADCASTS ─────────────────────────────────────────────────────
+async function loadScheduledBroadcasts() {
+  const list = document.getElementById('scheduled-list');
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/scheduled_broadcasts?shown=eq.false&select=*&order=show_at.asc`, { headers });
+    const rows = res.ok ? await res.json() : [];
+    if (!rows.length) {
+      list.innerHTML = `<div class="empty-note">No broadcasts scheduled.</div>`;
+      return;
+    }
+    list.innerHTML = rows.map(r => `
+      <div class="scheduled-row">
+        <div class="scheduled-row-info">
+          <div class="scheduled-message">${escapeHtml(r.message)}</div>
+          <div class="scheduled-time">Shows at ${new Date(r.show_at).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })}</div>
+        </div>
+        <button class="scheduled-cancel-btn" data-id="${r.id}">Cancel</button>
+      </div>
+    `).join('');
+    list.querySelectorAll('.scheduled-cancel-btn').forEach(btn => {
+      btn.addEventListener('click', () => cancelScheduledBroadcast(btn.dataset.id));
+    });
+  } catch(e) {
+    list.innerHTML = `<div class="empty-note">Failed to load: ${e.message}</div>`;
+  }
+}
+
+document.getElementById('scheduled-add-btn').addEventListener('click', async () => {
+  const msgInput = document.getElementById('scheduled-message-input');
+  const timeInput = document.getElementById('scheduled-time-input');
+  const message = msgInput.value.trim();
+  const showAt = timeInput.value;
+
+  if (!message || !showAt) { alert('Enter both a message and a time'); return; }
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/scheduled_broadcasts`, {
+      method: 'POST',
+      headers: { ...headers, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ message, show_at: new Date(showAt).toISOString() })
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      alert('Failed to schedule: ' + errText);
+      return;
+    }
+    msgInput.value = '';
+    timeInput.value = '';
+    loadScheduledBroadcasts();
+  } catch(e) { alert('Failed: ' + e.message); }
+});
+
+async function cancelScheduledBroadcast(id) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/scheduled_broadcasts?id=eq.${id}`, { method: 'DELETE', headers });
+    loadScheduledBroadcasts();
+  } catch(e) { alert('Failed: ' + e.message); }
 }
