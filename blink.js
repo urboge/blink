@@ -25,7 +25,17 @@ let activeStickerCat = 'favourites';
 let favStickers      = [];
 let customStickers   = [];
 let stories          = {};
-let myStory          = null;
+let myStories         = []; // array of { storyId, url, time, viewers: [], likes: [] }
+
+// Study Notes state
+let studyUploadMode    = 'text'; // 'text' | 'image' | 'pdf'
+let studyUploadFile    = null;   // base64 of selected image/pdf
+let studyUploadFileType = null;
+let activeStudyNote    = null;   // currently open note in detail view
+const MAX_STUDY_FILE_BYTES = 4 * 1024 * 1024; // 4MB ceiling for note attachments
+let activeStoryViewerIndex = 0; // which story in the current viewer sequence is showing
+let activeStoryViewerOwner = null;
+const MAX_STORIES_PER_DAY = 10;
 let storyViewerQueue = [];
 let storyViewerIdx   = 0;
 let storyTimer       = null;
@@ -74,7 +84,7 @@ function saveFavStickers()    { ls('favStickers',    JSON.stringify(favStickers)
 function saveCustomStickers() { ls('customStickers', JSON.stringify(customStickers)); }
 function saveAvatars()        { ls('avatars',        JSON.stringify(avatars)); }
 function saveStories()        { ls('stories',        JSON.stringify(stories)); }
-function saveMyStory()        { ls('myStory',        JSON.stringify(myStory)); }
+function saveMyStory()        { ls('myStories',       JSON.stringify(myStories)); }
 function saveStreaks()        { ls('streaks',        JSON.stringify(streaks)); }
 
 const STORY_EXPIRY_MS = 24 * 60 * 60 * 1000;
@@ -564,7 +574,14 @@ async function startApp() {
   avatars        = JSON.parse(ls('avatars')        || '{}');
   myAvatar       = ls('myAvatar') || '';
   stories        = JSON.parse(ls('stories')        || '{}');
-  myStory        = JSON.parse(ls('myStory')        || 'null');
+  myStories      = JSON.parse(ls('myStories')      || 'null');
+  if (!myStories) {
+    // Migrate from the old single-story format if present
+    const oldSingle = JSON.parse(ls('myStory') || 'null');
+    myStories = oldSingle ? [{ storyId: 'story_legacy', ...oldSingle, likes: oldSingle.likes || [] }] : [];
+    ls('myStories', JSON.stringify(myStories));
+    ls('myStory', '');
+  }
   streaks        = JSON.parse(ls('streaks')        || '{}');
   notificationsOn = ls('notificationsOn') !== 'false';
   updateMyAvatarUI();
@@ -1052,7 +1069,630 @@ async function sendVoiceMessage() {
 }
 
 
-// ─── BLINK CAMERA / SNAP ENGINE ─────────────────────────────────────────────────
+// ─── STUDY NOTES ────────────────────────────────────────────────────────────────
+
+let activeStudyTab = 'browse';
+
+function openStudyView() {
+  document.getElementById('study-view').classList.add('open');
+  document.getElementById('study-search-input').value = '';
+  document.getElementById('study-filter-subject').value = '';
+  document.getElementById('study-filter-class').value = '';
+  setStudyTab('browse');
+}
+
+function setStudyTab(tab) {
+  activeStudyTab = tab;
+  document.querySelectorAll('.study-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('study-filters').style.display = tab === 'browse' ? 'flex' : 'none';
+  document.getElementById('study-search-input').placeholder = tab === 'browse' ? 'Search subject, class, or title...' : 'Search within people you follow...';
+  if (tab === 'browse') loadStudyNotes('');
+  else loadFollowingFeed('');
+}
+
+async function loadFollowingFeed(query) {
+  const resultsEl = document.getElementById('study-results');
+  resultsEl.innerHTML = `<div class="study-empty-note">Loading...</div>`;
+  try {
+    const followRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/study_follows?follower=eq.${encodeURIComponent(myUsername)}&select=followee`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    const followed = followRes.ok ? (await followRes.json()).map(r => r.followee) : [];
+
+    if (!followed.length) {
+      resultsEl.innerHTML = `<div class="study-empty-note">You're not following anyone yet. Open a note and tap Follow to see their future notes here.</div>`;
+      return;
+    }
+
+    const followedFilter = followed.map(u => `username.eq.${encodeURIComponent(u)}`).join(',');
+    const notesRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/study_notes?or=(${followedFilter})&select=*&order=created_at.desc`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    let notes = notesRes.ok ? await notesRes.json() : [];
+    if (query) {
+      const q = query.toLowerCase();
+      notes = notes.filter(n => n.title.toLowerCase().includes(q) || n.subject.toLowerCase().includes(q) || n.class_code.toLowerCase().includes(q));
+    }
+    if (!notes.length) {
+      resultsEl.innerHTML = `<div class="study-empty-note">No notes yet from people you follow.</div>`;
+      return;
+    }
+    renderStudyResults(notes);
+  } catch(e) {
+    resultsEl.innerHTML = `<div class="study-empty-note">Failed to load your feed.</div>`;
+  }
+}
+
+function closeStudyView() {
+  document.getElementById('study-view').classList.remove('open');
+}
+
+let studySearchDebounce = null;
+function debouncedStudySearch() {
+  clearTimeout(studySearchDebounce);
+  studySearchDebounce = setTimeout(() => {
+    const q = document.getElementById('study-search-input').value.trim();
+    if (activeStudyTab === 'following') loadFollowingFeed(q);
+    else loadStudyNotes(q);
+  }, 300);
+}
+
+async function loadStudyNotes(query) {
+  const resultsEl = document.getElementById('study-results');
+  resultsEl.innerHTML = `<div class="study-empty-note">Searching...</div>`;
+
+  const subjectFilter = document.getElementById('study-filter-subject').value.trim();
+  const classFilter = document.getElementById('study-filter-class').value.trim();
+
+  // Combine the free-text search query with subject/class filters into one
+  // fuzzy query string — the search_study_notes() function ranks by
+  // similarity across title/subject/class together, so combining these is
+  // a reasonable way to let all three narrow the same ranked result set.
+  const combinedQuery = [query, subjectFilter, classFilter].filter(Boolean).join(' ').trim();
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_study_notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify({ query: combinedQuery, limit_count: 40 })
+    });
+    if (!res.ok) { resultsEl.innerHTML = `<div class="study-empty-note">Search failed — try again</div>`; return; }
+    let notes = await res.json();
+
+    // Extra client-side narrowing when both filter fields are filled in,
+    // since the server-side fuzzy rank alone doesn't guarantee both match.
+    if (subjectFilter) notes = notes.filter(n => n.subject.toLowerCase().includes(subjectFilter.toLowerCase()) || similarityRough(n.subject, subjectFilter));
+    if (classFilter) notes = notes.filter(n => n.class_code.toLowerCase().includes(classFilter.toLowerCase()) || similarityRough(n.class_code, classFilter));
+
+    renderStudyResults(notes);
+  } catch(e) {
+    resultsEl.innerHTML = `<div class="study-empty-note">Search failed — check your connection</div>`;
+  }
+}
+
+// Rough client-side fuzzy fallback (simple substring/typo tolerance) used
+// only to avoid over-filtering results the server already ranked closely.
+function similarityRough(a, b) {
+  a = a.toLowerCase(); b = b.toLowerCase();
+  if (a.includes(b) || b.includes(a)) return true;
+  let matches = 0;
+  for (const ch of b) if (a.includes(ch)) matches++;
+  return matches / b.length > 0.6;
+}
+
+function renderStudyResults(notes) {
+  const resultsEl = document.getElementById('study-results');
+  if (!notes.length) {
+    resultsEl.innerHTML = `<div class="study-empty-note">No notes found. Try a different search, or be the first to share notes for this class.</div>`;
+    return;
+  }
+  resultsEl.innerHTML = '';
+  notes.forEach(note => {
+    const card = document.createElement('div');
+    card.className = 'study-card';
+    const expiresIn = formatExpiryLabel(note.expires_at);
+    const typeIconSvg = note.file_type === 'pdf'
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`
+      : note.file_type === 'image'
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>`;
+
+    card.innerHTML = `
+      <div class="study-card-badges">
+        <span class="study-badge">${escHtml(note.subject)}</span>
+        <span class="study-badge class-badge">${escHtml(note.class_code)}</span>
+      </div>
+      <div class="study-card-title">${escHtml(note.title)}</div>
+      ${note.description ? `<div class="study-card-desc">${escHtml(note.description)}</div>` : ''}
+      <div class="study-card-footer">
+        <div class="study-card-author">
+          <div class="avatar ${avatarColor(note.username)}">${avatarLetter(note.username)}</div>
+          @${escHtml(note.username)}
+        </div>
+        <div class="study-card-type-icon">${typeIconSvg}</div>
+      </div>
+      <div class="study-card-expiry">${expiresIn}</div>
+    `;
+    card.addEventListener('click', () => openStudyNoteDetail(note));
+    resultsEl.appendChild(card);
+  });
+}
+
+function formatExpiryLabel(expiresAt) {
+  const days = Math.ceil((new Date(expiresAt) - Date.now()) / (24*60*60*1000));
+  if (days <= 0) return 'Expiring soon';
+  if (days === 1) return 'Expires tomorrow';
+  return `Expires in ${days} days`;
+}
+
+async function openStudyNoteDetail(note) {
+  activeStudyNote = note;
+  console.log('[openStudyNoteDetail] note data:', note);
+  console.log('[openStudyNoteDetail] file_type:', note.file_type, 'has file_data:', !!note.file_data, 'file_data length:', note.file_data?.length);
+  const content = document.getElementById('study-detail-content');
+
+  let bodyHtml = '';
+  if (note.file_type === 'image' && note.file_data) {
+    bodyHtml = `<img src="${note.file_data}" style="width:100%;border-radius:14px;margin-bottom:16px;">`;
+  } else if (note.file_type === 'pdf' && note.file_data) {
+    bodyHtml = `<a href="${note.file_data}" download="${escHtml(note.title)}.pdf" class="study-pdf-download">📄 Download PDF</a>`;
+  } else if (note.body_text) {
+    bodyHtml = `<div class="study-body-text">${escHtml(note.body_text).replace(/\n/g, '<br>')}</div>`;
+  }
+
+  const isOwnNote = note.username === myUsername;
+
+  content.innerHTML = `
+    <div class="study-card-badges" style="margin-bottom:10px;">
+      <span class="study-badge">${escHtml(note.subject)}</span>
+      <span class="study-badge class-badge">${escHtml(note.class_code)}</span>
+    </div>
+    <h1 style="font-size:22px;margin-bottom:6px;">${escHtml(note.title)}</h1>
+    <div class="study-detail-author-row">
+      <div class="study-card-author">
+        <div class="avatar ${avatarColor(note.username)}" style="width:24px;height:24px;font-size:11px;">${avatarLetter(note.username)}</div>
+        @${escHtml(note.username)} · ${formatExpiryLabel(note.expires_at)}
+      </div>
+      ${!isOwnNote ? `<button id="study-follow-btn" class="study-follow-btn">Follow</button>` : ''}
+    </div>
+    ${note.description ? `<p style="color:var(--text-secondary);margin-bottom:16px;">${escHtml(note.description)}</p>` : ''}
+    ${bodyHtml}
+    <div id="study-like-row">
+      <button id="study-note-like-btn" class="study-note-like-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+      </button>
+      <span id="study-like-count">0 likes</span>
+    </div>
+
+    <div id="study-qa-section">
+      <h2 class="study-qa-heading">Questions & Answers</h2>
+      <div id="study-qa-ask-row">
+        <input type="text" id="study-qa-input" placeholder="Ask a question about these notes...">
+        <button id="study-qa-send">Ask</button>
+      </div>
+      <div id="study-qa-thread"></div>
+    </div>
+
+    <div id="study-recommendations"></div>
+  `;
+
+  // Only the owner sees the delete button on their own note's detail page
+  const deleteBtn = document.getElementById('study-detail-delete');
+  deleteBtn.style.display = isOwnNote ? 'flex' : 'none';
+
+  document.getElementById('study-note-detail').classList.add('open');
+
+  // Wire up follow, like, and Q&A — done after the HTML is in the DOM
+  if (!isOwnNote) setupFollowButton(note.username);
+  setupLikeButton(note.id);
+  loadQAThread(note.id);
+  document.getElementById('study-qa-send').addEventListener('click', () => submitQuestion(note.id));
+  document.getElementById('study-qa-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitQuestion(note.id); });
+
+  loadRecommendations(note);
+}
+
+function closeStudyNoteDetail() {
+  document.getElementById('study-note-detail').classList.remove('open');
+  activeStudyNote = null;
+}
+
+// ─── PHASE 3: FOLLOWING ───────────────────────────────────────────────────────
+async function setupFollowButton(username) {
+  const btn = document.getElementById('study-follow-btn');
+  if (!btn) return;
+  let isFollowing = false;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/study_follows?follower=eq.${encodeURIComponent(myUsername)}&followee=eq.${encodeURIComponent(username)}&select=follower`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    const rows = res.ok ? await res.json() : [];
+    isFollowing = rows.length > 0;
+  } catch(e) {}
+  renderFollowBtnState(btn, isFollowing);
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      if (isFollowing) {
+        await fetch(`${SUPABASE_URL}/rest/v1/study_follows?follower=eq.${encodeURIComponent(myUsername)}&followee=eq.${encodeURIComponent(username)}`, {
+          method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        isFollowing = false;
+      } else {
+        await fetch(`${SUPABASE_URL}/rest/v1/study_follows`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify({ follower: myUsername, followee: username })
+        });
+        isFollowing = true;
+      }
+      renderFollowBtnState(btn, isFollowing);
+    } catch(e) { toast('Failed — try again'); }
+    btn.disabled = false;
+  });
+}
+
+function renderFollowBtnState(btn, isFollowing) {
+  btn.textContent = isFollowing ? 'Following' : 'Follow';
+  btn.classList.toggle('following', isFollowing);
+}
+
+// ─── PHASE 4: LIKES ───────────────────────────────────────────────────────────
+async function setupLikeButton(noteId) {
+  const btn = document.getElementById('study-note-like-btn');
+  const countEl = document.getElementById('study-like-count');
+  if (!btn) return;
+
+  let liked = false;
+  let count = 0;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/study_note_likes?note_id=eq.${noteId}&select=username`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    const rows = res.ok ? await res.json() : [];
+    count = rows.length;
+    liked = rows.some(r => r.username === myUsername);
+  } catch(e) {}
+  renderLikeBtnState(btn, countEl, liked, count);
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      if (liked) {
+        await fetch(`${SUPABASE_URL}/rest/v1/study_note_likes?note_id=eq.${noteId}&username=eq.${encodeURIComponent(myUsername)}`, {
+          method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        liked = false; count--;
+      } else {
+        await fetch(`${SUPABASE_URL}/rest/v1/study_note_likes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify({ note_id: noteId, username: myUsername })
+        });
+        liked = true; count++;
+      }
+      renderLikeBtnState(btn, countEl, liked, count);
+    } catch(e) { toast('Failed — try again'); }
+    btn.disabled = false;
+  });
+}
+
+function renderLikeBtnState(btn, countEl, liked, count) {
+  btn.classList.toggle('liked', liked);
+  btn.querySelector('svg').setAttribute('fill', liked ? 'currentColor' : 'none');
+  countEl.textContent = `${count} ${count === 1 ? 'like' : 'likes'}`;
+}
+
+// ─── PHASE 2: Q&A ─────────────────────────────────────────────────────────────
+async function loadQAThread(noteId) {
+  const threadEl = document.getElementById('study-qa-thread');
+  if (!threadEl) return;
+  threadEl.innerHTML = `<div class="study-qa-loading">Loading questions...</div>`;
+
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/study_note_qa?note_id=eq.${noteId}&select=*&order=created_at.asc`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    const rows = res.ok ? await res.json() : [];
+    const questions = rows.filter(r => !r.parent_id);
+    const answersByParent = {};
+    rows.filter(r => r.parent_id).forEach(a => {
+      if (!answersByParent[a.parent_id]) answersByParent[a.parent_id] = [];
+      answersByParent[a.parent_id].push(a);
+    });
+
+    if (!questions.length) {
+      threadEl.innerHTML = `<div class="study-qa-empty">No questions yet — be the first to ask.</div>`;
+      return;
+    }
+
+    threadEl.innerHTML = '';
+    questions.forEach(q => {
+      const qEl = document.createElement('div');
+      qEl.className = 'study-qa-question';
+      qEl.innerHTML = `
+        <div class="study-qa-q-header">
+          <span class="study-qa-author">@${escHtml(q.username)}</span>
+          <span class="study-qa-time">${formatTime(new Date(q.created_at).getTime())}</span>
+        </div>
+        <div class="study-qa-text">${escHtml(q.text)}</div>
+        <div class="study-qa-answers"></div>
+        <button class="study-qa-reply-btn">Reply</button>
+        <div class="study-qa-reply-input-wrap" style="display:none;">
+          <input type="text" class="study-qa-reply-input" placeholder="Write an answer...">
+          <button class="study-qa-reply-send">Send</button>
+        </div>
+      `;
+      const answersEl = qEl.querySelector('.study-qa-answers');
+      (answersByParent[q.id] || []).forEach(a => {
+        const aEl = document.createElement('div');
+        aEl.className = 'study-qa-answer';
+        aEl.innerHTML = `
+          <div class="study-qa-q-header">
+            <span class="study-qa-author">@${escHtml(a.username)}</span>
+            ${a.is_author ? '<span class="study-qa-author-badge">Author</span>' : ''}
+            <span class="study-qa-time">${formatTime(new Date(a.created_at).getTime())}</span>
+          </div>
+          <div class="study-qa-text">${escHtml(a.text)}</div>
+        `;
+        answersEl.appendChild(aEl);
+      });
+
+      const replyBtn = qEl.querySelector('.study-qa-reply-btn');
+      const replyWrap = qEl.querySelector('.study-qa-reply-input-wrap');
+      const replyInput = qEl.querySelector('.study-qa-reply-input');
+      replyBtn.addEventListener('click', () => {
+        replyWrap.style.display = replyWrap.style.display === 'none' ? 'flex' : 'none';
+        if (replyWrap.style.display === 'flex') replyInput.focus();
+      });
+      const sendReply = () => submitAnswer(noteId, q.id, replyInput);
+      qEl.querySelector('.study-qa-reply-send').addEventListener('click', sendReply);
+      replyInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendReply(); });
+
+      threadEl.appendChild(qEl);
+    });
+  } catch(e) {
+    threadEl.innerHTML = `<div class="study-qa-empty">Failed to load questions.</div>`;
+  }
+}
+
+async function submitQuestion(noteId) {
+  const input = document.getElementById('study-qa-input');
+  const text = input.value.trim();
+  if (!text) return;
+  const sendBtn = document.getElementById('study-qa-send');
+  sendBtn.disabled = true;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/study_note_qa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ note_id: noteId, username: myUsername, text })
+    });
+    if (!res.ok) { toast('Failed to post question'); sendBtn.disabled = false; return; }
+    input.value = '';
+    await loadQAThread(noteId);
+    notifyNoteOwnerOfQuestion(noteId, text);
+  } catch(e) { toast('Failed — check connection'); }
+  sendBtn.disabled = false;
+}
+
+async function submitAnswer(noteId, parentId, inputEl) {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  const isAuthor = activeStudyNote && activeStudyNote.username === myUsername;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/study_note_qa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ note_id: noteId, parent_id: parentId, username: myUsername, text, is_author: isAuthor })
+    });
+    if (!res.ok) { toast('Failed to post answer'); return; }
+    inputEl.value = '';
+    await loadQAThread(noteId);
+  } catch(e) { toast('Failed — check connection'); }
+}
+
+// Notifies the note owner that someone asked a question, reusing Blink's
+// existing DM pipeline tagged distinctly — same pattern as story replies —
+// rather than building a whole separate notification system.
+async function notifyNoteOwnerOfQuestion(noteId, questionText) {
+  if (!activeStudyNote || activeStudyNote.username === myUsername) return; // don't notify yourself
+  const ownerUsername = activeStudyNote.username;
+  const msgId = generateMsgId();
+  const noteRef = { noteId, noteTitle: activeStudyNote.title };
+  ensureContact(ownerUsername);
+  // This is a lightweight system-style notification, not added to the
+  // owner's visible chat history on this device — only pushed to them.
+  await pushToSupabase(ownerUsername, JSON.stringify({ ...noteRef, question: questionText, from: myUsername }), 'study_question_notify', { msgId });
+}
+
+// ─── PHASE 6 PLACEHOLDER: RECOMMENDATIONS (basic version using existing fuzzy search) ──
+async function loadRecommendations(note) {
+  const el = document.getElementById('study-recommendations');
+  if (!el) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_study_notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify({ query: `${note.subject} ${note.class_code}`, limit_count: 6 })
+    });
+    if (!res.ok) return;
+    let related = await res.json();
+    related = related.filter(n => n.id !== note.id).slice(0, 4);
+    if (!related.length) { el.innerHTML = ''; return; }
+
+    el.innerHTML = `<h2 class="study-qa-heading">More for ${escHtml(note.subject)} · ${escHtml(note.class_code)}</h2><div id="study-recs-grid"></div>`;
+    const grid = document.getElementById('study-recs-grid');
+    related.forEach(r => {
+      const card = document.createElement('div');
+      card.className = 'study-rec-card';
+      card.innerHTML = `
+        <div class="study-card-badges"><span class="study-badge">${escHtml(r.subject)}</span></div>
+        <div class="study-card-title" style="font-size:13px;">${escHtml(r.title)}</div>
+        <div class="study-card-author" style="font-size:11px;">@${escHtml(r.username)}</div>
+      `;
+      card.addEventListener('click', () => openStudyNoteDetail(r));
+      grid.appendChild(card);
+    });
+  } catch(e) {}
+}
+
+async function deleteStudyNote(noteId, onDeleted) {
+  if (!confirm('Delete this note? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/study_notes?id=eq.${noteId}&username=eq.${encodeURIComponent(myUsername)}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) { toast('Failed to delete note'); return; }
+    toast('Note deleted');
+    if (onDeleted) onDeleted();
+  } catch(e) { toast('Failed to delete — check connection'); }
+}
+
+// ─── MY NOTES VIEW ────────────────────────────────────────────────────────────
+function openMyNotesView() {
+  document.getElementById('study-mynotes-view').classList.add('open');
+  loadMyNotes();
+}
+
+function closeMyNotesView() {
+  document.getElementById('study-mynotes-view').classList.remove('open');
+}
+
+async function loadMyNotes() {
+  const resultsEl = document.getElementById('study-mynotes-results');
+  resultsEl.innerHTML = `<div class="study-empty-note">Loading...</div>`;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/study_notes?username=eq.${encodeURIComponent(myUsername)}&select=*&order=created_at.desc`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    const notes = res.ok ? await res.json() : [];
+    if (!notes.length) {
+      resultsEl.innerHTML = `<div class="study-empty-note">You haven't shared any notes yet.</div>`;
+      return;
+    }
+    resultsEl.innerHTML = '';
+    notes.forEach(note => {
+      const card = document.createElement('div');
+      card.className = 'study-card';
+      const expiresIn = formatExpiryLabel(note.expires_at);
+      card.innerHTML = `
+        <button class="study-card-delete-btn" title="Delete">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+        </button>
+        <div class="study-card-badges">
+          <span class="study-badge">${escHtml(note.subject)}</span>
+          <span class="study-badge class-badge">${escHtml(note.class_code)}</span>
+        </div>
+        <div class="study-card-title">${escHtml(note.title)}</div>
+        ${note.description ? `<div class="study-card-desc">${escHtml(note.description)}</div>` : ''}
+        <div class="study-card-expiry">${expiresIn}</div>
+      `;
+      card.addEventListener('click', e => {
+        if (e.target.closest('.study-card-delete-btn')) return;
+        openStudyNoteDetail(note);
+      });
+      card.querySelector('.study-card-delete-btn').addEventListener('click', e => {
+        e.stopPropagation();
+        deleteStudyNote(note.id, loadMyNotes);
+      });
+      resultsEl.appendChild(card);
+    });
+  } catch(e) {
+    resultsEl.innerHTML = `<div class="study-empty-note">Failed to load your notes.</div>`;
+  }
+}
+
+// ─── UPLOAD MODAL ────────────────────────────────────────────────────────────
+function openStudyUploadModal() {
+  document.getElementById('study-title-input').value = '';
+  document.getElementById('study-subject-input').value = '';
+  document.getElementById('study-class-input').value = '';
+  document.getElementById('study-deadline-input').value = '';
+  document.getElementById('study-description-input').value = '';
+  document.getElementById('study-body-text-input').value = '';
+  document.getElementById('study-file-preview').style.display = 'none';
+  document.getElementById('study-file-preview').innerHTML = '';
+  studyUploadMode = 'text';
+  studyUploadFile = null;
+  studyUploadFileType = null;
+  document.querySelectorAll('.study-upload-tab').forEach(t => t.classList.toggle('active', t.dataset.mode === 'text'));
+  document.getElementById('study-body-text-input').style.display = 'block';
+  document.getElementById('study-upload-modal').classList.add('open');
+}
+
+function setStudyUploadMode(mode) {
+  studyUploadMode = mode;
+  document.querySelectorAll('.study-upload-tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+  document.getElementById('study-body-text-input').style.display = mode === 'text' ? 'block' : 'none';
+  if (mode !== 'text') {
+    document.getElementById('study-file-input').accept = mode === 'pdf' ? 'application/pdf' : 'image/*';
+    document.getElementById('study-file-input').click();
+  }
+}
+
+async function submitStudyNote() {
+  const title = document.getElementById('study-title-input').value.trim();
+  const subject = document.getElementById('study-subject-input').value.trim();
+  const classCode = document.getElementById('study-class-input').value.trim();
+  const deadline = document.getElementById('study-deadline-input').value || null;
+  const description = document.getElementById('study-description-input').value.trim();
+  const bodyText = document.getElementById('study-body-text-input').value.trim();
+
+  if (!title || !subject || !classCode) { toast('Title, subject, and class are required'); return; }
+  if (studyUploadMode === 'text' && !bodyText) { toast('Write something for your notes'); return; }
+  if (studyUploadMode !== 'text' && !studyUploadFile) { toast('Choose a file first'); return; }
+
+  const btn = document.getElementById('study-upload-submit');
+  btn.disabled = true; btn.textContent = 'Posting...';
+
+  const createdAt = new Date();
+  // Mirror compute_note_expiry() locally so the row's expires_at is set
+  // correctly even though the actual deletion enforcement happens server-side.
+  let expiresAt = new Date(createdAt.getTime() + 14*24*60*60*1000);
+  if (deadline) {
+    const deadlinePlus2 = new Date(new Date(deadline).getTime() + 2*24*60*60*1000);
+    if (deadlinePlus2 < expiresAt) expiresAt = deadlinePlus2;
+  }
+
+  try {
+    const payload = {
+      username: myUsername, title, subject, class_code: classCode,
+      description: description || null,
+      file_data: studyUploadMode !== 'text' ? studyUploadFile : null,
+      file_type: studyUploadMode !== 'text' ? studyUploadFileType : 'text',
+      body_text: studyUploadMode === 'text' ? bodyText : null,
+      deadline, expires_at: expiresAt.toISOString()
+    };
+    console.log('[submitStudyNote] mode:', studyUploadMode, 'file present:', !!studyUploadFile, 'file_data length:', studyUploadFile?.length, 'file_type:', studyUploadFileType);
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/study_notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      toast('Failed to post notes');
+      console.error('study_notes insert failed', errText);
+    } else {
+      toast('Notes posted');
+      document.getElementById('study-upload-modal').classList.remove('open');
+      loadStudyNotes(document.getElementById('study-search-input').value.trim());
+    }
+  } catch(e) { toast('Failed to post notes — check connection'); }
+
+  btn.disabled = false; btn.textContent = 'Post Notes';
+}
+
+
 
 let replyLockedRecipient = null; // when set, sending a snap skips the picker and goes straight to this contact
 
@@ -1337,9 +1977,14 @@ function cleanExpiredStories() {
   const expiry = Date.now() - STORY_EXPIRY_MS;
   let changed = false;
   Object.keys(stories).forEach(u => {
-    if (stories[u] && stories[u].time < expiry) { delete stories[u]; changed = true; }
+    const before = stories[u]?.length || 0;
+    stories[u] = (stories[u] || []).filter(s => s.time >= expiry);
+    if (stories[u].length !== before) changed = true;
+    if (!stories[u].length) delete stories[u];
   });
-  if (myStory && myStory.time < expiry) { myStory = null; ls('myStory', ''); }
+  const beforeMine = myStories.length;
+  myStories = myStories.filter(s => s.time >= expiry);
+  if (myStories.length !== beforeMine) saveMyStory();
   if (changed) saveStories();
 }
 
@@ -1349,52 +1994,73 @@ function renderStoriesBar() {
   renderAvatarEl(myAv, myUsername, myUsername, 50);
   const myRing = document.querySelector('#my-story-circle .story-ring');
   const myBadge = document.querySelector('#my-story-circle .story-add-badge');
-  if (myStory) { myRing.classList.remove('no-story'); myBadge.style.display = 'none'; }
+  if (myStories.length) { myRing.classList.remove('no-story'); myBadge.style.display = 'none'; }
   else { myRing.classList.add('no-story'); myBadge.style.display = 'flex'; }
 
   const list = document.getElementById('stories-list');
   list.innerHTML = '';
-  const activeStories = contacts.map(c => ({ contact: c, story: stories[c.code] })).filter(s => s.story);
+  const activeStories = contacts.map(c => ({ contact: c, storyList: stories[c.code] })).filter(s => s.storyList && s.storyList.length);
 
-  activeStories.forEach(({ contact, story }) => {
-    const viewed = story.viewedByMe;
+  activeStories.forEach(({ contact, storyList }) => {
+    const allViewed = storyList.every(s => s.viewedByMe);
     const div = document.createElement('div');
     div.className = 'story-circle';
     div.innerHTML = `
-      <div class="story-ring ${viewed ? 'viewed' : ''}">
+      <div class="story-ring ${allViewed ? 'viewed' : ''}">
         <div class="story-avatar-wrap">${getAvatar(contact.code) ? `<img src="${getAvatar(contact.code)}">` : `<div class="avatar ${avatarColor(contact.code)}" style="width:100%;height:100%;font-size:18px;">${avatarLetter(contact.name)}</div>`}</div>
+        ${storyList.length > 1 ? `<span class="story-count-badge">${storyList.length}</span>` : ''}
       </div>
       <span class="story-label">${escHtml(contact.name)}</span>`;
-    div.addEventListener('click', () => openStoryViewer(contact.code));
+    div.addEventListener('click', () => openStoryViewer(contact.code, 0));
     list.appendChild(div);
   });
 }
 
 async function postStory(file) {
+  const todaysCount = myStories.filter(s => s.time >= Date.now() - 24*60*60*1000).length;
+  if (todaysCount >= MAX_STORIES_PER_DAY) {
+    toast(`You can only post ${MAX_STORIES_PER_DAY} stories per day`);
+    return;
+  }
   try {
     const base64 = await compressImage(file, MAX_STORY_BYTES, 1080, 0.75);
-    myStory = { url: base64, time: Date.now(), viewers: [] };
+    const storyId = 'story_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const newStory = { storyId, url: base64, time: Date.now(), viewers: [], likes: [] };
+    myStories.push(newStory);
     saveMyStory();
     renderStoriesBar();
-    contacts.forEach(c => pushToSupabase(c.code, base64, 'story'));
+    contacts.forEach(c => pushToSupabase(c.code, base64, 'story', { storyId }));
     toast('Story posted');
   } catch(e) { toast('Failed to post story'); }
 }
 
-function removeMyStory() {
-  myStory = null;
-  ls('myStory', '');
+function removeMyStoryById(storyId) {
+  myStories = myStories.filter(s => s.storyId !== storyId);
+  saveMyStory();
   renderStoriesBar();
-  contacts.forEach(c => pushToSupabase(c.code, '', 'story_delete'));
+  contacts.forEach(c => pushToSupabase(c.code, '', 'story_delete', { storyId }));
   toast('Story removed');
 }
 
-function openStoryViewer(username) {
+function openStoryViewer(username, startIndex = 0) {
   const isMine = username === myUsername;
-  const story = isMine ? myStory : stories[username];
-  if (!story) return;
+  const storyList = isMine ? myStories : (stories[username] || []);
+  if (!storyList.length) return;
 
-  const viewer = document.getElementById('story-viewer');
+  activeStoryViewerOwner = username;
+  activeStoryViewerIndex = Math.max(0, Math.min(startIndex, storyList.length - 1));
+
+  document.getElementById('story-viewer').classList.add('open');
+  renderActiveStorySlide();
+}
+
+function renderActiveStorySlide() {
+  const username = activeStoryViewerOwner;
+  const isMine = username === myUsername;
+  const storyList = isMine ? myStories : (stories[username] || []);
+  const story = storyList[activeStoryViewerIndex];
+  if (!story) { closeStoryViewer(); return; }
+
   const contact = contacts.find(c => c.code === username);
   const name = isMine ? 'Your Story' : (contact?.name || username);
 
@@ -1403,40 +2069,131 @@ function openStoryViewer(username) {
   document.getElementById('story-viewer-name').textContent = name;
   document.getElementById('story-viewer-time').textContent = formatTime(story.time);
   document.getElementById('story-viewer-img').src = story.url;
-  viewer.classList.add('open');
+
+  // Segmented progress bar — one segment per story in this person's sequence
+  const segWrap = document.getElementById('story-progress-segments');
+  segWrap.innerHTML = storyList.map((_, i) => `<div class="story-seg" data-i="${i}"><div class="story-seg-fill"></div></div>`).join('');
 
   if (!isMine) {
     story.viewedByMe = true;
     saveStories();
     renderStoriesBar();
-    pushToSupabase(username, myUsername, 'story_view');
+    pushToSupabase(username, JSON.stringify({ storyId: story.storyId }), 'story_view');
   }
 
   const viewersList = document.getElementById('story-viewers-list');
   const deleteBtn = document.getElementById('story-viewer-delete');
+  const likeBtn = document.getElementById('story-like-btn');
+  const commentInput = document.getElementById('story-comment-input');
+
   if (isMine) {
     deleteBtn.style.display = 'flex';
+    likeBtn.style.display = 'none';
+    commentInput.parentElement.style.display = 'none';
     if (story.viewers?.length) {
-      viewersList.textContent = '👁 Viewed by ' + story.viewers.join(', ');
+      const likedBy = story.likes || [];
+      viewersList.innerHTML = '👁 ' + story.viewers.map(v => likedBy.includes(v) ? `${escHtml(v)} ❤️` : escHtml(v)).join(', ');
       viewersList.style.display = 'block';
     } else { viewersList.style.display = 'none'; }
   } else {
     deleteBtn.style.display = 'none';
     viewersList.style.display = 'none';
+    likeBtn.style.display = 'flex';
+    commentInput.parentElement.style.display = 'flex';
+    const iLiked = (story.likes || []).includes(myUsername);
+    likeBtn.classList.toggle('liked', iLiked);
+    likeBtn.querySelector('svg').setAttribute('fill', iLiked ? 'currentColor' : 'none');
   }
 
-  const fill = document.getElementById('story-progress-fill');
-  fill.style.transition = 'none';
-  fill.style.width = '0%';
-  requestAnimationFrame(() => { fill.style.transition = 'width 5s linear'; fill.style.width = '100%'; });
+  runStorySegmentProgress(storyList.length);
+}
+
+function runStorySegmentProgress(totalSegments) {
   clearTimeout(storyTimer);
-  storyTimer = setTimeout(closeStoryViewer, 5000);
+  const segs = document.querySelectorAll('.story-seg-fill');
+  segs.forEach((seg, i) => {
+    seg.style.transition = 'none';
+    seg.style.width = i < activeStoryViewerIndex ? '100%' : '0%';
+  });
+  requestAnimationFrame(() => {
+    const currentFill = segs[activeStoryViewerIndex];
+    if (currentFill) {
+      currentFill.style.transition = 'width 5s linear';
+      currentFill.style.width = '100%';
+    }
+  });
+  storyTimer = setTimeout(() => advanceStory(1), 5000);
+}
+
+function advanceStory(direction) {
+  const username = activeStoryViewerOwner;
+  const isMine = username === myUsername;
+  const storyList = isMine ? myStories : (stories[username] || []);
+  const nextIndex = activeStoryViewerIndex + direction;
+  if (nextIndex < 0) return; // already at first, ignore back-tap past start
+  if (nextIndex >= storyList.length) { closeStoryViewer(); return; }
+  activeStoryViewerIndex = nextIndex;
+  renderActiveStorySlide();
 }
 
 function closeStoryViewer() {
   clearTimeout(storyTimer);
   document.getElementById('story-viewer').classList.remove('open');
   document.getElementById('story-viewer-img').src = '';
+  document.getElementById('story-comment-input').value = '';
+  activeStoryViewerOwner = null;
+  activeStoryViewerIndex = 0;
+}
+
+function toggleLikeActiveStory() {
+  const username = activeStoryViewerOwner;
+  if (!username || username === myUsername) return;
+  const storyList = stories[username] || [];
+  const story = storyList[activeStoryViewerIndex];
+  if (!story) return;
+  if (!story.likes) story.likes = [];
+  const idx = story.likes.indexOf(myUsername);
+  const liked = idx === -1;
+  if (liked) story.likes.push(myUsername); else story.likes.splice(idx, 1);
+  saveStories();
+  const likeBtn = document.getElementById('story-like-btn');
+  likeBtn.classList.toggle('liked', liked);
+  likeBtn.querySelector('svg').setAttribute('fill', liked ? 'currentColor' : 'none');
+  pushToSupabase(username, JSON.stringify({ storyId: story.storyId, liked }), 'story_like');
+}
+
+function sendStoryComment() {
+  const input = document.getElementById('story-comment-input');
+  const text = input.value.trim();
+  if (!text) return;
+  const username = activeStoryViewerOwner;
+  if (!username || username === myUsername) return;
+  const storyList = stories[username] || [];
+  const story = storyList[activeStoryViewerIndex];
+  if (!story) return;
+
+  // Sent as a normal DM, tagged so it renders distinctly as a story reply
+  // rather than a plain message — reuses the existing chat pipeline instead
+  // of a separate comment-thread system.
+  const msgId = generateMsgId();
+  const storyReplyMeta = { storyId: story.storyId, storyThumb: story.url };
+  ensureContact(username);
+  addMessageToChat(username, { msgId, text, time: Date.now(), sent: true, read: true, type: 'text', storyReply: storyReplyMeta });
+  pushToSupabase(username, text, 'text', { msgId, storyReply: JSON.stringify(storyReplyMeta) });
+  trackMessageSent('text');
+  input.value = '';
+  toast('Reply sent');
+}
+
+function deleteActiveMyStory() {
+  const story = myStories[activeStoryViewerIndex];
+  if (!story) return;
+  if (!confirm('Remove this story?')) return;
+  const wasLastStory = myStories.length === 1;
+  removeMyStoryById(story.storyId);
+  if (wasLastStory) { closeStoryViewer(); return; }
+  if (activeStoryViewerIndex >= myStories.length) activeStoryViewerIndex = myStories.length - 1;
+  renderActiveStorySlide();
 }
 
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
@@ -1867,6 +2624,14 @@ function renderMessages(code, type = 'dm') {
       quote.innerHTML = `<div class="reply-quote-author">${escHtml(quoteAuthor)}</div><div class="reply-quote-text">${escHtml(replyPreviewText(m.replyTo))}</div>`;
       quote.addEventListener('click', () => scrollToMessage(code, m.replyTo.msgId));
       bwrap.appendChild(quote);
+    }
+    if (m.storyReply) {
+      const storyQuote = document.createElement('div');
+      storyQuote.className = 'story-reply-quote';
+      storyQuote.innerHTML = `
+        ${m.storyReply.storyThumb ? `<img src="${m.storyReply.storyThumb}" class="story-reply-thumb">` : ''}
+        <div class="story-reply-label">${m.sent ? 'Replied to their story' : 'Replied to your story'}</div>`;
+      bwrap.appendChild(storyQuote);
     }
     const bubble = document.createElement('div');
     if (m.type === 'file') {
@@ -2662,23 +3427,48 @@ async function pollMessages() {
 
       if (r.type === 'story') {
         ensureContact(r.from);
-        stories[r.from] = { url: r.text, time: new Date(r.created_at).getTime(), viewedByMe: false, viewers: [] };
+        if (!stories[r.from]) stories[r.from] = [];
+        stories[r.from].push({ storyId: r.storyId, url: r.text, time: new Date(r.created_at).getTime(), viewedByMe: false, viewers: [], likes: [] });
         saveStories();
         renderStoriesBar();
         return;
       }
       if (r.type === 'story_delete') {
-        delete stories[r.from];
-        saveStories();
-        renderStoriesBar();
+        try {
+          const { storyId } = JSON.parse(r.text || '{}');
+          if (stories[r.from] && storyId) {
+            stories[r.from] = stories[r.from].filter(s => s.storyId !== storyId);
+            if (!stories[r.from].length) delete stories[r.from];
+            saveStories();
+            renderStoriesBar();
+          }
+        } catch(e) {}
         return;
       }
       if (r.type === 'story_view') {
-        if (myStory) {
-          const viewerName = r.text || r.from;
-          if (!myStory.viewers.includes(viewerName)) myStory.viewers.push(viewerName);
-          saveMyStory();
-        }
+        try {
+          const { storyId } = JSON.parse(r.text || '{}');
+          const story = myStories.find(s => s.storyId === storyId);
+          if (story && !story.viewers.includes(r.from)) {
+            story.viewers.push(r.from);
+            saveMyStory();
+          }
+        } catch(e) {}
+        return;
+      }
+      if (r.type === 'story_like') {
+        try {
+          const { storyId, liked } = JSON.parse(r.text || '{}');
+          const story = myStories.find(s => s.storyId === storyId);
+          if (story) {
+            if (!story.likes) story.likes = [];
+            const idx = story.likes.indexOf(r.from);
+            if (liked && idx === -1) story.likes.push(r.from);
+            if (!liked && idx !== -1) story.likes.splice(idx, 1);
+            saveMyStory();
+            if (liked) toast(`${contacts.find(c=>c.code===r.from)?.name || r.from} liked your story`);
+          }
+        } catch(e) {}
         return;
       }
       if (r.type === 'read_receipt') {
@@ -2817,6 +3607,15 @@ async function pollMessages() {
         return;
       }
 
+      // ── Study notes: someone asked a question on one of my notes ──
+      if (r.type === 'study_question_notify') {
+        try {
+          const { noteTitle, question, from } = JSON.parse(r.text);
+          toast(`@${from} asked a question on "${noteTitle}"`);
+        } catch(e) {}
+        return;
+      }
+
       // ── Device removed: the primary device removed this device from the account ──
       if (r.type === 'device_removed') {
         if (r.targetDeviceId && r.targetDeviceId !== myDeviceId) return;
@@ -2849,7 +3648,7 @@ async function pollMessages() {
       if (silentTypes.includes(r.type)) return;
       if (!r.text) return;
       ensureContact(r.from);
-      addMessageToChat(r.from, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration, replyTo: parseReplyTo(r.replyTo) });
+      addMessageToChat(r.from, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration, replyTo: parseReplyTo(r.replyTo), storyReply: parseReplyTo(r.storyReply) });
     });
 
     // With per-device addresses, every row this poll picked up was meant for
@@ -2898,7 +3697,7 @@ function handleSelfSyncRow(r) {
     } catch(e) {}
     return;
   }
-  if (['read_receipt','story','story_delete','story_view','code_change','avatar_update','contact_sync','group_invite','snap_opened'].includes(r.type)) {
+  if (['read_receipt','story','story_delete','story_view','story_like','code_change','avatar_update','contact_sync','group_invite','snap_opened'].includes(r.type)) {
     // These either don't apply across devices the same way, or are already
     // covered by the regular per-device sync mechanisms — skip silently.
     return;
@@ -2911,7 +3710,7 @@ function handleSelfSyncRow(r) {
   const msg = {
     msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(),
     sent: true, read: true, type: r.type || 'text',
-    duration: r.duration, replyTo: parseReplyTo(r.replyTo)
+    duration: r.duration, replyTo: parseReplyTo(r.replyTo), storyReply: parseReplyTo(r.storyReply)
   };
   if (r.groupId) { msg.senderCode = myUsername; msg.senderName = myUsername; }
 
@@ -3279,10 +4078,64 @@ document.getElementById('story-text-input').addEventListener('keydown', e => {
 window.addEventListener('resize', () => { if (document.getElementById('story-editor').classList.contains('open')) renderEditorCanvas(); });
 
 // Blink Camera (Snap-style one-time photos)
-document.getElementById('blink-camera-btn').addEventListener('click', openBlinkCamera);
+document.getElementById('blink-camera-btn-small').addEventListener('click', openBlinkCamera);
 document.getElementById('blink-camera-close').addEventListener('click', closeBlinkCamera);
 document.getElementById('blink-camera-flip').addEventListener('click', flipCamera);
 document.getElementById('blink-camera-shutter').addEventListener('click', captureSnapPhoto);
+
+// Study Notes
+document.getElementById('study-btn').addEventListener('click', openStudyView);
+document.getElementById('study-close-btn').addEventListener('click', closeStudyView);
+document.getElementById('study-search-input').addEventListener('input', debouncedStudySearch);
+document.getElementById('study-filter-subject').addEventListener('input', debouncedStudySearch);
+document.getElementById('study-filter-class').addEventListener('input', debouncedStudySearch);
+document.getElementById('study-filter-clear').addEventListener('click', () => {
+  document.getElementById('study-filter-subject').value = '';
+  document.getElementById('study-filter-class').value = '';
+  loadStudyNotes(document.getElementById('study-search-input').value.trim());
+});
+document.querySelectorAll('.study-tab').forEach(tab => {
+  tab.addEventListener('click', () => setStudyTab(tab.dataset.tab));
+});
+
+document.getElementById('study-upload-btn').addEventListener('click', openStudyUploadModal);
+document.getElementById('study-upload-cancel').addEventListener('click', () => document.getElementById('study-upload-modal').classList.remove('open'));
+document.getElementById('study-upload-modal').addEventListener('click', e => { if (e.target === document.getElementById('study-upload-modal')) document.getElementById('study-upload-modal').classList.remove('open'); });
+document.getElementById('study-upload-submit').addEventListener('click', submitStudyNote);
+
+document.querySelectorAll('.study-upload-tab').forEach(tab => {
+  tab.addEventListener('click', () => setStudyUploadMode(tab.dataset.mode));
+});
+document.getElementById('study-file-input').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  if (file.size > MAX_STUDY_FILE_BYTES) { toast('File too large — max 4MB'); return; }
+  try {
+    if (studyUploadMode === 'image') {
+      studyUploadFile = await compressImage(file, 1.5*1024*1024, 1600, 0.8);
+      studyUploadFileType = 'image';
+      document.getElementById('study-file-preview').innerHTML = `<img src="${studyUploadFile}">`;
+    } else {
+      studyUploadFile = await fileToBase64(file);
+      studyUploadFileType = 'pdf';
+      document.getElementById('study-file-preview').innerHTML = `<div class="file-chip">📄 ${escHtml(file.name)}</div>`;
+    }
+    document.getElementById('study-file-preview').style.display = 'block';
+  } catch(e) { toast('Failed to process file'); }
+});
+
+document.getElementById('study-detail-back').addEventListener('click', closeStudyNoteDetail);
+document.getElementById('study-detail-delete').addEventListener('click', () => {
+  if (!activeStudyNote) return;
+  deleteStudyNote(activeStudyNote.id, () => {
+    closeStudyNoteDetail();
+    loadStudyNotes(document.getElementById('study-search-input').value.trim());
+  });
+});
+
+document.getElementById('study-mynotes-btn').addEventListener('click', openMyNotesView);
+document.getElementById('study-mynotes-back').addEventListener('click', closeMyNotesView);
+
 document.getElementById('blink-camera-retake').addEventListener('click', retakeSnap);
 document.getElementById('blink-camera-send-btn').addEventListener('click', openSnapSendToPicker);
 
@@ -3293,15 +4146,15 @@ document.getElementById('snap-sendto-confirm').addEventListener('click', sendSna
 // Stories
 let storyPressTimer;
 document.getElementById('my-story-circle').addEventListener('click', () => {
-  if (myStory) openStoryViewer(myUsername);
+  if (myStories.length) openStoryViewer(myUsername, 0);
   else document.getElementById('story-file-input').click();
 });
 document.getElementById('my-story-circle').addEventListener('mousedown', () => {
-  if (myStory) storyPressTimer = setTimeout(() => { if (confirm('Remove your story?')) removeMyStory(); }, 600);
+  if (myStories.length) storyPressTimer = setTimeout(() => { if (confirm('Remove your most recent story?')) removeMyStoryById(myStories[myStories.length-1].storyId); }, 600);
 });
 document.getElementById('my-story-circle').addEventListener('mouseup', () => clearTimeout(storyPressTimer));
 document.getElementById('my-story-circle').addEventListener('touchstart', () => {
-  if (myStory) storyPressTimer = setTimeout(() => { if (confirm('Remove your story?')) removeMyStory(); }, 600);
+  if (myStories.length) storyPressTimer = setTimeout(() => { if (confirm('Remove your most recent story?')) removeMyStoryById(myStories[myStories.length-1].storyId); }, 600);
 }, { passive: true });
 document.getElementById('my-story-circle').addEventListener('touchend', () => clearTimeout(storyPressTimer));
 document.getElementById('story-file-input').addEventListener('change', async e => {
@@ -3310,15 +4163,18 @@ document.getElementById('story-file-input').addEventListener('change', async e =
   openStoryEditor(file);
 });
 document.getElementById('story-viewer-close').addEventListener('click', closeStoryViewer);
-document.getElementById('story-viewer-tap-right').addEventListener('click', closeStoryViewer);
-document.getElementById('story-viewer-tap-left').addEventListener('click', closeStoryViewer);
-document.getElementById('story-viewer-delete').addEventListener('click', () => {
-  if (confirm('Remove your story?')) {
-    removeMyStory();
-    closeStoryViewer();
-  }
+document.getElementById('story-viewer-tap-right').addEventListener('click', () => advanceStory(1));
+document.getElementById('story-viewer-tap-left').addEventListener('click', () => advanceStory(-1));
+document.getElementById('story-viewer-delete').addEventListener('click', deleteActiveMyStory);
+document.getElementById('story-like-btn').addEventListener('click', toggleLikeActiveStory);
+document.getElementById('story-comment-send').addEventListener('click', sendStoryComment);
+document.getElementById('story-comment-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendStoryComment(); });
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('story-viewer').classList.contains('open')) return;
+  if (e.key === 'Escape') closeStoryViewer();
+  if (e.key === 'ArrowRight') advanceStory(1);
+  if (e.key === 'ArrowLeft') advanceStory(-1);
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeStoryViewer(); });
 
 // Lightbox
 document.getElementById('lightbox').addEventListener('click', e => { if(e.target===document.getElementById('lightbox')) closeLightbox(); });
@@ -3340,9 +4196,15 @@ document.getElementById('settings-remove-avatar').addEventListener('click', () =
 
 // Settings — remove story
 document.getElementById('settings-remove-story').addEventListener('click', () => {
-  if (!myStory) { toast('You have no active story'); return; }
+  if (!myStories.length) { toast('You have no active story'); return; }
   document.getElementById('settings-overlay').classList.remove('open');
-  if (confirm('Remove your story?')) removeMyStory();
+  if (myStories.length === 1) {
+    if (confirm('Remove your story?')) removeMyStoryById(myStories[0].storyId);
+  } else {
+    if (confirm(`Remove all ${myStories.length} of your active stories?`)) {
+      [...myStories].forEach(s => removeMyStoryById(s.storyId));
+    }
+  }
 });
 
 // Remove account
@@ -3415,7 +4277,7 @@ document.getElementById('settings-btn').addEventListener('click', async () => {
   try { updateNotificationToggleUI(); } catch(e) {}
   try {
     const removeStoryBtn = document.getElementById('settings-remove-story');
-    if (removeStoryBtn) removeStoryBtn.style.display = myStory ? 'block' : 'none';
+    if (removeStoryBtn) removeStoryBtn.style.display = myStories.length ? 'block' : 'none';
   } catch(e) {}
   document.getElementById('settings-overlay').classList.add('open');
   renderManageDevicesSection();
