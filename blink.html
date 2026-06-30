@@ -136,6 +136,12 @@
 
     <div id="search-wrap">
       <input id="search" type="text" placeholder="Search">
+      <button id="blink-camera-btn-small" title="Blink it">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+      </button>
     </div>
 
     <div id="my-code-bar" title="Tap to copy your username">
@@ -146,13 +152,13 @@
 
     <div id="contacts-list"></div>
 
-    <!-- BLINK CAMERA BUTTON -->
-    <button id="blink-camera-btn">
+    <!-- STUDY BUTTON -->
+    <button id="study-btn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-        <circle cx="12" cy="13" r="4"/>
+        <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+        <path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/>
       </svg>
-      <span>Blink it</span>
+      <span>Study</span>
     </button>
 
   </div><!-- /sidebar -->
@@ -463,7 +469,7 @@
 
 <!-- STORY VIEWER -->
 <div id="story-viewer">
-  <div id="story-progress-bar"><div id="story-progress-fill"></div></div>
+  <div id="story-progress-segments"></div>
   <div id="story-viewer-header">
     <div class="avatar" id="story-viewer-avatar"></div>
     <div class="story-viewer-info">
@@ -481,9 +487,122 @@
   <div id="story-viewer-tap-left"></div>
   <div id="story-viewer-tap-right"></div>
   <div id="story-viewers-list"></div>
+
+  <div id="story-bottom-bar">
+    <button id="story-like-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+    </button>
+    <div id="story-comment-input-wrap">
+      <input type="text" id="story-comment-input" placeholder="Reply to story..." autocomplete="off">
+      <button id="story-comment-send">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 16-8-4-8 4 8-16z"/></svg>
+      </button>
+    </div>
+  </div>
 </div>
 
-<!-- BLINK CAMERA CAPTURE -->
+<!-- STUDY NOTES VIEW (full screen) -->
+<div id="study-view">
+  <div id="study-header">
+    <button id="study-close-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div id="study-search-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="study-search-input" type="text" placeholder="Search subject, class, or title...">
+    </div>
+    <button id="study-mynotes-btn" title="My Notes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/></svg>
+    </button>
+    <button id="study-upload-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <span>Share Notes</span>
+    </button>
+  </div>
+
+  <div id="study-tabs">
+    <button class="study-tab active" data-tab="browse">Browse</button>
+    <button class="study-tab" data-tab="following">Following</button>
+  </div>
+
+  <div id="study-filters">
+    <input id="study-filter-subject" type="text" placeholder="Subject (e.g. Chemistry)">
+    <input id="study-filter-class" type="text" placeholder="Class (e.g. S4EN1)">
+    <button id="study-filter-clear">Clear</button>
+  </div>
+
+  <div id="study-results"></div>
+</div>
+
+<!-- STUDY NOTES UPLOAD MODAL -->
+<div class="modal-overlay" id="study-upload-modal">
+  <div class="modal" id="study-upload-modal-inner">
+    <h2>Share Study Notes</h2>
+
+    <label>Title</label>
+    <input type="text" id="study-title-input" placeholder="e.g. Chapter 4 Summary — Cell Biology">
+
+    <div style="display:flex; gap:10px;">
+      <div style="flex:1;">
+        <label>Subject</label>
+        <input type="text" id="study-subject-input" placeholder="e.g. Biology">
+      </div>
+      <div style="flex:1;">
+        <label>Class</label>
+        <input type="text" id="study-class-input" placeholder="e.g. S4EN1">
+      </div>
+    </div>
+
+    <label>Test / Deadline date <span style="color:#8e8e93;font-weight:400;">(optional)</span></label>
+    <input type="date" id="study-deadline-input">
+
+    <label>Description <span style="color:#8e8e93;font-weight:400;">(optional)</span></label>
+    <textarea id="study-description-input" rows="2" placeholder="Brief description..."></textarea>
+
+    <label>Content</label>
+    <div id="study-upload-tabs">
+      <button class="study-upload-tab active" data-mode="text">Text</button>
+      <button class="study-upload-tab" data-mode="image">Image</button>
+      <button class="study-upload-tab" data-mode="pdf">PDF</button>
+    </div>
+    <textarea id="study-body-text-input" rows="6" placeholder="Type or paste your notes here..."></textarea>
+    <input type="file" id="study-file-input" accept="image/*" style="display:none;">
+    <div id="study-file-preview" style="display:none;"></div>
+
+    <div class="modal-actions">
+      <button class="btn-cancel" id="study-upload-cancel">Cancel</button>
+      <button class="btn-add" id="study-upload-submit">Post Notes</button>
+    </div>
+  </div>
+</div>
+
+<!-- STUDY NOTE DETAIL VIEW -->
+<div id="study-note-detail">
+  <div id="study-detail-header">
+    <button id="study-detail-back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <span>Notes</span>
+    <button id="study-detail-delete" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+    </button>
+  </div>
+  <div id="study-detail-content"></div>
+</div>
+
+<!-- MY NOTES VIEW -->
+<div id="study-mynotes-view">
+  <div id="study-detail-header">
+    <button id="study-mynotes-back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <span>My Notes</span>
+    <div style="width:20px;"></div>
+  </div>
+  <div id="study-mynotes-results"></div>
+</div>
+
+
 <div id="blink-camera-overlay">
   <div id="blink-camera-frame">
     <video id="blink-camera-video" autoplay playsinline muted></video>
