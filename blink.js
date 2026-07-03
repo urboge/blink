@@ -588,6 +588,7 @@ async function startApp() {
   cleanExpiredImages();
   cleanExpiredStories();
   renderContacts();
+  fetchPayBalance(); // show balance in sidebar chip
   await loadStickers();
   await registerDevice();
   if (SUPABASE_URL && SUPABASE_KEY) {
@@ -4084,7 +4085,7 @@ document.getElementById('blink-camera-flip').addEventListener('click', flipCamer
 document.getElementById('blink-camera-shutter').addEventListener('click', captureSnapPhoto);
 
 // Study Notes
-document.getElementById('study-btn').addEventListener('click', openStudyView);
+// Study button is now a plain <a href="study.html"> — no JS listener needed
 document.getElementById('study-close-btn').addEventListener('click', closeStudyView);
 document.getElementById('study-search-input').addEventListener('input', debouncedStudySearch);
 document.getElementById('study-filter-subject').addEventListener('input', debouncedStudySearch);
@@ -4270,6 +4271,37 @@ document.getElementById('remove-account-confirm').addEventListener('click', asyn
   localStorage.clear();
   window.location.reload();
 });
+
+// Dots menu toggle
+const dotsBtn = document.getElementById('dots-menu-btn');
+const dotsDropdown = document.getElementById('dots-dropdown');
+dotsBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  const isOpen = dotsDropdown.classList.contains('open');
+  if (isOpen) { dotsDropdown.classList.remove('open'); return; }
+  // Position using fixed coords so it floats above all sidebar stacking contexts
+  const rect = dotsBtn.getBoundingClientRect();
+  dotsDropdown.style.top = (rect.bottom + 6) + 'px';
+  dotsDropdown.style.right = (window.innerWidth - rect.right) + 'px';
+  dotsDropdown.classList.add('open');
+});
+document.addEventListener('click', () => dotsDropdown.classList.remove('open'));
+document.querySelectorAll('.dots-item').forEach(item => {
+  item.addEventListener('click', () => dotsDropdown.classList.remove('open'), true);
+});
+
+// Blink Pay — fetch and display balance in sidebar chip
+async function fetchPayBalance() {
+  if (!myUsername) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/balances?username=eq.${encodeURIComponent(myUsername)}&select=amount`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+    if (!res.ok) return;
+    const rows = await res.json();
+    const label = document.getElementById('pay-balance-label');
+    if (label) label.textContent = rows.length ? `BP ${rows[0].amount.toLocaleString()}` : 'BP —';
+  } catch(e) {}
+}
 
 document.getElementById('settings-btn').addEventListener('click', async () => {
   try { document.getElementById('settings-username-val').textContent = '@' + myUsername; } catch(e) {}
