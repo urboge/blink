@@ -530,3 +530,95 @@ async function cancelScheduledBroadcast(id) {
     loadScheduledBroadcasts();
   } catch(e) { alert('Failed: ' + e.message); }
 }
+
+// ─── WALLET MANAGEMENT ────────────────────────────────────────────────────────
+let walletTargetUser = null;
+let walletCurrentBalance = 0;
+
+document.getElementById('wallet-lookup-btn').addEventListener('click', lookupWallet);
+document.getElementById('wallet-username-input').addEventListener('keydown', e => { if (e.key === 'Enter') lookupWallet(); });
+
+async function lookupWallet() {
+  const input = document.getElementById('wallet-username-input');
+  const resultEl = document.getElementById('wallet-result');
+  const actionRow = document.getElementById('wallet-action-row');
+  const username = input.value.trim().replace(/^@/, '');
+  if (!username) return;
+
+  walletTargetUser = null;
+  actionRow.style.display = 'none';
+  resultEl.innerHTML = '<div class="empty-note">Looking up...</div>';
+
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/balances?username=eq.${encodeURIComponent(username)}&select=*`,
+      { headers }
+    );
+    const rows = res.ok ? await res.json() : [];
+
+    if (!rows.length) {
+      resultEl.innerHTML = `<div class="empty-note">No wallet found for @${escapeHtml(username)} — they may not have opened Blink Pay yet.</div>`;
+      return;
+    }
+
+    walletTargetUser = username;
+    walletCurrentBalance = rows[0].amount;
+
+    resultEl.innerHTML = `
+      <div class="wallet-balance-card">
+        <div>
+          <div class="wallet-balance-label">@${escapeHtml(username)}</div>
+        </div>
+        <div class="wallet-balance-amount">BP ${walletCurrentBalance.toLocaleString()}</div>
+      </div>`;
+
+    actionRow.style.display = 'flex';
+    document.getElementById('wallet-amount-input').value = '';
+  } catch(e) {
+    resultEl.innerHTML = `<div class="empty-note">Lookup failed: ${e.message}</div>`;
+  }
+}
+
+document.getElementById('wallet-add-btn').addEventListener('click', () => adjustWallet(1));
+document.getElementById('wallet-remove-btn').addEventListener('click', () => adjustWallet(-1));
+
+async function adjustWallet(direction) {
+  if (!walletTargetUser) return;
+  const raw = parseFloat(document.getElementById('wallet-amount-input').value);
+  if (!raw || raw <= 0 || isNaN(raw)) { alert('Enter a valid amount'); return; }
+  const delta = Math.round(raw) * direction;
+  const newBalance = walletCurrentBalance + delta;
+
+  if (newBalance < 0) {
+    if (!confirm(`This would set @${walletTargetUser}'s balance to ${newBalance}. Proceed with a negative balance?`)) return;
+  }
+
+  const verb = direction > 0 ? 'Add' : 'Remove';
+  if (!confirm(`${verb} BP ${Math.round(raw)} ${direction > 0 ? 'to' : 'from'} @${walletTargetUser}?\nNew balance: BP ${newBalance.toLocaleString()}`)) return;
+
+  try {
+    // Upsert the balance row — sets it to the new computed value directly.
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/balances`, {
+      method: 'POST',
+      headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ username: walletTargetUser, amount: newBalance })
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      alert('Failed to update balance: ' + err);
+      return;
+    }
+    walletCurrentBalance = newBalance;
+    document.getElementById('wallet-result').innerHTML = `
+      <div class="wallet-balance-card">
+        <div>
+          <div class="wallet-balance-label">@${escapeHtml(walletTargetUser)}</div>
+        </div>
+        <div class="wallet-balance-amount">BP ${walletCurrentBalance.toLocaleString()}</div>
+      </div>`;
+    document.getElementById('wallet-amount-input').value = '';
+    alert(`Done — @${walletTargetUser}'s balance is now BP ${walletCurrentBalance.toLocaleString()}`);
+  } catch(e) {
+    alert('Failed: ' + e.message);
+  }
+}
