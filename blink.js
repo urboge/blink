@@ -4291,6 +4291,16 @@ document.querySelectorAll('.dots-item').forEach(item => {
 });
 
 // Blink Pay — fetch and display balance in sidebar chip
+function formatBP(n) {
+  if (n >= 1e18) return (n / 1e18).toFixed(n % 1e18 === 0 ? 0 : 1).replace(/\.0$/, '') + 'q';
+  if (n >= 1e15) return (n / 1e15).toFixed(n % 1e15 === 0 ? 0 : 1).replace(/\.0$/, '') + 'q';
+  if (n >= 1e12) return (n / 1e12).toFixed(n % 1e12 === 0 ? 0 : 1).replace(/\.0$/, '') + 't';
+  if (n >= 1e9)  return (n / 1e9 ).toFixed(n % 1e9  === 0 ? 0 : 1).replace(/\.0$/, '') + 'b';
+  if (n >= 1e6)  return (n / 1e6 ).toFixed(n % 1e6  === 0 ? 0 : 1).replace(/\.0$/, '') + 'm';
+  if (n >= 1e3)  return (n / 1e3 ).toFixed(n % 1e3  === 0 ? 0 : 1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
+
 async function fetchPayBalance() {
   if (!myUsername) return;
   try {
@@ -4299,7 +4309,7 @@ async function fetchPayBalance() {
     if (!res.ok) return;
     const rows = await res.json();
     const label = document.getElementById('pay-balance-label');
-    if (label) label.textContent = rows.length ? `BP ${rows[0].amount.toLocaleString()}` : 'BP —';
+    if (label) label.textContent = rows.length ? `BP ${formatBP(rows[0].amount)}` : 'BP —';
   } catch(e) {}
 }
 
