@@ -191,6 +191,42 @@
   }
   .force-signout-btn:hover { background: rgba(255,69,58,0.25); }
 
+  /* WALLET MANAGEMENT */
+  #wallet-search-row { display: flex; gap: 8px; margin-top: 8px; }
+  #wallet-username-input {
+    flex: 1; background: #2c2c2e; border: 1px solid #38383a;
+    border-radius: 10px; padding: 9px 12px; color: #fff; font-size: 14px; outline: none; font-family: inherit;
+  }
+  #wallet-lookup-btn {
+    background: #2563eb; border: none; border-radius: 10px; padding: 9px 16px;
+    color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+  }
+  #wallet-lookup-btn:hover { background: #1d4ed8; }
+  #wallet-result {
+    margin-top: 10px; font-size: 14px; min-height: 20px;
+  }
+  .wallet-balance-card {
+    background: #1c1c1e; border: 1px solid #38383a; border-radius: 12px;
+    padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .wallet-balance-label { font-size: 13px; color: #8e8e93; }
+  .wallet-balance-amount { font-size: 22px; font-weight: 700; color: #fff; }
+  #wallet-action-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  #wallet-amount-input {
+    flex: 1; min-width: 100px; background: #2c2c2e; border: 1px solid #38383a;
+    border-radius: 10px; padding: 9px 12px; color: #fff; font-size: 14px; outline: none; font-family: inherit;
+  }
+  .wallet-btn-add {
+    background: rgba(22,163,74,0.2); color: #4ade80; border: none; border-radius: 10px;
+    padding: 9px 18px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  .wallet-btn-add:hover { background: rgba(22,163,74,0.3); }
+  .wallet-btn-remove {
+    background: rgba(255,69,58,0.15); color: #ff453a; border: none; border-radius: 10px;
+    padding: 9px 18px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  .wallet-btn-remove:hover { background: rgba(255,69,58,0.25); }
+
   .empty-note { color: #8e8e93; font-size: 13px; padding: 16px; text-align: center; }
 </style>
 </head>
@@ -303,6 +339,21 @@
       <button id="scheduled-add-btn">Schedule</button>
     </div>
     <div id="scheduled-list"></div>
+  </section>
+
+  <section>
+    <h2>Wallet Management</h2>
+    <div class="config-desc">Look up any user's Blink Pay balance and add or remove funds directly.</div>
+    <div id="wallet-search-row">
+      <input type="text" id="wallet-username-input" placeholder="username">
+      <button id="wallet-lookup-btn">Look Up</button>
+    </div>
+    <div id="wallet-result"></div>
+    <div id="wallet-action-row" style="display:none;">
+      <input type="number" id="wallet-amount-input" placeholder="Amount" min="1">
+      <button id="wallet-add-btn" class="wallet-btn-add">+ Add</button>
+      <button id="wallet-remove-btn" class="wallet-btn-remove">− Remove</button>
+    </div>
   </section>
 </div>
 
