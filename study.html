@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blink Study</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="study.css">
+</head>
+<body>
+
+<!-- TRANSITION OVERLAY (dark → light) -->
+<div id="transition-overlay"></div>
+
+<!-- TOP NAV -->
+<nav id="top-nav">
+  <a href="blink.html" id="nav-back">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    <span>Blink</span>
+  </a>
+  <div id="nav-logo">
+    <div id="nav-logo-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/></svg>
+    </div>
+    <span>Study</span>
+  </div>
+  <div id="nav-actions">
+    <a href="pay.html" id="study-pay-btn" title="Blink Pay">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+      <span id="study-pay-label">BP —</span>
+    </a>
+    <button id="my-notes-btn">My Notes</button>
+    <button id="upload-btn">+ Share Notes</button>
+  </div>
+</nav>
+
+<!-- LANDING VIEW (search hero) -->
+<div id="landing">
+  <div id="landing-inner">
+    <h1 id="landing-title">What are you studying today?</h1>
+    <p id="landing-sub">Search notes shared by your classmates</p>
+
+    <div id="hero-search-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="hero-search" type="text" placeholder="Search subject, class, or topic...">
+      <button id="hero-search-btn">Search</button>
+    </div>
+
+    <div id="filter-chips-wrap">
+      <input id="filter-subject" type="text" placeholder="Subject">
+      <input id="filter-class" type="text" placeholder="Class (e.g. S4EN1)">
+    </div>
+
+    <!-- TABS -->
+    <div id="landing-tabs">
+      <button class="ltab active" data-tab="browse">Recent notes</button>
+      <button class="ltab" data-tab="following">From people you follow</button>
+    </div>
+
+    <!-- SUGGESTION CARDS -->
+    <div id="suggestion-row"></div>
+  </div>
+</div>
+
+<!-- RESULTS VIEW -->
+<div id="results-view" style="display:none;">
+  <div id="results-topbar">
+    <button id="results-back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      Back
+    </button>
+    <span id="results-label"></span>
+    <div id="results-search-inline">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="results-search-input" type="text" placeholder="Refine search...">
+    </div>
+  </div>
+  <div id="results-body">
+    <div id="results-list"></div>
+    <div id="note-detail-panel">
+      <div id="detail-empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <p>Select a note to read</p>
+      </div>
+      <div id="note-detail" style="display:none;">
+        <div id="nd-topbar">
+          <div id="nd-badges"></div>
+          <div id="nd-actions">
+            <button id="nd-delete-btn" style="display:none;" title="Delete">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+            </button>
+          </div>
+        </div>
+        <h1 id="nd-title"></h1>
+        <div id="nd-meta"></div>
+        <p id="nd-description"></p>
+        <div id="nd-body"></div>
+        <div id="nd-like-row">
+          <button id="like-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          </button>
+          <span id="like-count">0 likes</span>
+        </div>
+
+        <div id="nd-donate-row">
+          <span id="donate-label">Support the author</span>
+          <div id="donate-btns">
+            <button class="donate-btn" data-amount="100">💙 100 BP</button>
+            <button class="donate-btn" data-amount="500">💙 500 BP</button>
+            <button class="donate-btn" data-amount="1000">💙 1000 BP</button>
+          </div>
+        </div>
+        <div id="qa-section">
+          <h3>Questions & Answers</h3>
+          <div id="qa-ask-row">
+            <input type="text" id="qa-input" placeholder="Ask a question...">
+            <button id="qa-send">Ask</button>
+          </div>
+          <div id="qa-thread"></div>
+        </div>
+        <div id="recommendations"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MY NOTES OVERLAY -->
+<div id="my-notes-overlay" class="sheet-overlay">
+  <div class="sheet">
+    <div class="sheet-header">
+      <span>My Notes</span>
+      <button class="sheet-close" id="my-notes-close">✕</button>
+    </div>
+    <div id="my-notes-list"></div>
+  </div>
+</div>
+
+<!-- UPLOAD SHEET -->
+<div id="upload-overlay" class="sheet-overlay">
+  <div class="sheet sheet-wide">
+    <div class="sheet-header">
+      <span>Share Study Notes</span>
+      <button class="sheet-close" id="upload-close">✕</button>
+    </div>
+    <div class="sheet-body">
+      <label>Title</label>
+      <input type="text" id="up-title" placeholder="e.g. Chapter 4 — Cell Biology">
+      <div class="two-col">
+        <div><label>Subject</label><input type="text" id="up-subject" placeholder="e.g. Biology"></div>
+        <div><label>Class</label><input type="text" id="up-class" placeholder="e.g. S4EN1"></div>
+      </div>
+      <label>Test / Deadline <span class="opt">optional</span></label>
+      <input type="date" id="up-deadline">
+      <label>Description <span class="opt">optional</span></label>
+      <textarea id="up-description" rows="2" placeholder="Brief description..."></textarea>
+      <label>Content</label>
+      <div id="content-tabs">
+        <button class="ctab active" data-mode="text">📝 Text</button>
+        <button class="ctab" data-mode="image">🖼 Image</button>
+        <button class="ctab" data-mode="pdf">📄 PDF</button>
+      </div>
+      <textarea id="up-body" rows="10" placeholder="Type or paste your notes here..."></textarea>
+      <input type="file" id="up-file" style="display:none;" accept="image/*">
+      <div id="up-file-preview"></div>
+      <div class="sheet-actions">
+        <button class="btn-cancel" id="upload-cancel">Cancel</button>
+        <button class="btn-submit" id="upload-submit">Post Notes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script src="study.js"></script>
+</body>
+</html>

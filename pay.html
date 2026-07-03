@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blink Pay</title>
+  <style>
+    :root {
+      /* Revolut Ultra-Clean Minimalist Dark Palette */
+      --bg-main: #000000;
+      --bg-surface: #121418;
+      --bg-field: #1c1f26;
+      --accent-blue: #1976d2;
+      --accent-green: #00e676;
+      --accent-red: #ff1744;
+      --text-main: #ffffff;
+      --text-muted: #8e94a1;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    .wallet-container {
+      width: 100%;
+      max-width: 390px; /* Standard phone width for crisp scaling */
+      padding: 12px;
+    }
+
+    /* Revolut Premium Profile Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 40px;
+      padding: 0 8px;
+    }
+
+    .header h1 {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.6px;
+    }
+
+    .username-badge {
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 600;
+      background: var(--bg-surface);
+      padding: 6px 14px;
+      border-radius: 20px;
+      letter-spacing: -0.1px;
+    }
+
+    /* Large Minimal Balance Focal Point */
+    .balance-card {
+      padding: 16px 0;
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .balance-card span {
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 500;
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .balance-card strong {
+      font-size: 64px;
+      color: var(--text-main);
+      font-weight: 700;
+      letter-spacing: -2px;
+    }
+
+    /* Native Revolut Pill Row Actions */
+    .action-row {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 44px;
+    }
+
+    .action-btn {
+      background: var(--bg-surface);
+      color: var(--text-main);
+      border: none;
+      padding: 14px 28px;
+      border-radius: 26px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s ease, transform 0.1s ease;
+      flex: 1;
+      max-width: 140px;
+    }
+
+    .action-btn.primary {
+      background: var(--text-main);
+      color: var(--bg-main);
+    }
+
+    .action-btn:active {
+      transform: scale(0.96);
+    }
+
+    /* Activity Typography Clean Setup */
+    .history-section h2 {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      font-weight: 700;
+      padding: 0 4px;
+    }
+
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1px; /* Creates clean hairline divider separation natively */
+      background: rgba(255,255,255,0.03);
+      border-radius: 20px;
+      overflow: hidden;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+
+    .history-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-surface);
+      padding: 16px 20px;
+      font-size: 15px;
+    }
+
+    .history-item .details {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .history-item .party {
+      font-weight: 600;
+      color: var(--text-main);
+      letter-spacing: -0.2px;
+    }
+
+    .history-item .time {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+
+    .amount-positive {
+      color: var(--accent-green);
+      font-weight: 600;
+    }
+
+    .amount-negative {
+      color: var(--text-main);
+      font-weight: 600;
+    }
+
+    /* Premium Bottom Sheet Modal Custom Overlay */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      z-index: 1000;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-content {
+      background: var(--bg-surface);
+      width: 100%;
+      max-width: 420px;
+      border-top-left-radius: 28px;
+      border-top-right-radius: 28px;
+      padding: 24px 24px 40px 24px;
+      transform: translateY(100%);
+      transition: transform 0.28s cubic-bezier(0.15, 0.85, 0.35, 1);
+    }
+
+    .modal-overlay.open .modal-content {
+      transform: translateY(0);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    .modal-header h3 {
+      font-size: 19px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .close-modal-btn {
+      background: var(--bg-field);
+      border: none;
+      color: var(--text-main);
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .form-section {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* Chat Contact Selector Pillbox */
+    .contacts-title {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-bottom: -4px;
+    }
+
+    .contacts-row {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 4px 0 12px 0;
+    }
+
+    .contact-pill {
+      background: var(--bg-field);
+      color: var(--text-main);
+      padding: 10px 18px;
+      border-radius: 22px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.1s ease;
+    }
+
+    .contact-pill:hover {
+      background: #2a2f3a;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .input-wrapper .prefix {
+      position: absolute;
+      left: 18px;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    input {
+      width: 100%;
+      padding: 18px;
+      background: var(--bg-field);
+      border: none;
+      border-radius: 18px;
+      color: var(--text-main);
+      font-size: 16px;
+      font-weight: 500;
+      outline: none;
+    }
+
+    .with-prefix {
+      padding-left: 36px;
+    }
+
+    input::placeholder {
+      color: var(--text-muted);
+    }
+
+    input::-webkit-outer-spin-button,
+    input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .send-btn {
+      background: var(--text-main);
+      color: var(--bg-main);
+      border: none;
+      padding: 18px;
+      border-radius: 18px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+      margin-top: 6px;
+    }
+
+    .send-btn:disabled {
+      background: var(--bg-field);
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+
+    /* iOS-Style Toast Alert Notification */
+    .toast {
+      position: fixed;
+      top: 24px; /* Repositioned to top screen drop down for true Revolut alert styling */
+      left: 50%;
+      transform: translateX(-50%) translateY(-100px);
+      background: var(--bg-surface);
+      color: var(--text-main);
+      padding: 14px 24px;
+      border-radius: 30px;
+      font-size: 14px;
+      font-weight: 600;
+      z-index: 2000;
+      opacity: 0;
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s;
+      box-shadow: 0 12px 36px rgba(0,0,0,0.6);
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+
+    /* Clean viewport scrollbars removal */
+    ::-webkit-scrollbar { width: 0px; height: 0px; }
+  </style>
+</head>
+<body>
+
+  <div class="wallet-container">
+    <div class="header">
+      <h1>Blink Pay</h1>
+      <span id="user-badge" class="username-badge">@loading</span>
+    </div>
+
+    <div class="balance-card">
+      <span>Available Balance</span>
+      <strong id="balance-val">0</strong>
+    </div>
+
+    <div class="action-row">
+      <button class="action-btn primary" id="trigger-modal-open">Send</button>
+      <button class="action-btn" onclick="showToast('Feature coming soon')">Add money</button>
+    </div>
+
+    <div class="history-section">
+      <h2>Activity Log</h2>
+      <div id="history-wrapper" class="history-list"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="send-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Send Money</h3>
+        <button class="close-modal-btn" id="trigger-modal-close">✕</button>
+      </div>
+      
+      <div class="form-section">
+        <div class="contacts-title">Select Chat Contact</div>
+        <div class="contacts-row" id="contacts-container">
+          <div class="contact-pill" onclick="document.getElementById('recipient-input').value='alex_dev'">@alex_dev</div>
+          <div class="contact-pill" onclick="document.getElementById('recipient-input').value='sarah_k'">@sarah_k</div>
+          <div class="contact-pill" onclick="document.getElementById('recipient-input').value='john_doe'">@john_doe</div>
+        </div>
+
+        <div class="input-wrapper">
+          <span class="prefix">@</span>
+          <input type="text" id="recipient-input" class="with-prefix" placeholder="username">
+        </div>
+        <input type="number" id="amount-input" placeholder="Amount to send">
+        <button id="send-currency-btn" class="send-btn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-notif" class="toast">Success</div>
+
+  <script>
+    // --- UI Modal Toggle Additions ---
+    const modal = document.getElementById('send-modal');
+    document.getElementById('trigger-modal-open').addEventListener('click', () => modal.classList.add('open'));
+    document.getElementById('trigger-modal-close').addEventListener('click', () => modal.classList.remove('open'));
+    modal.addEventListener('click', (e) => { if(e.target === modal) modal.classList.remove('open'); });
+
+    try {
+      const contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
+      if(contacts.length > 0) {
+        const container = document.getElementById('contacts-container');
+        container.innerHTML = '';
+        contacts.forEach(c => {
+          const name = c.username || c;
+          if(name && name !== myUsername) {
+            const pill = document.createElement('div');
+            pill.className = 'contact-pill';
+            pill.textContent = `@${name}`;
+            pill.onclick = () => { document.getElementById('recipient-input').value = name; };
+            container.appendChild(pill);
+          }
+        });
+      }
+    } catch(e){}
+
+    // --- YOUR EXACT UNALTERED JAVASCRIPT LOGIC START ---
+    const SUPABASE_URL = 'https://gkrfiyalbjbgkjevmpod.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrcmZpeWFsYmpiZ2tqZXZtcG9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjA0OTksImV4cCI6MjA5NzE5NjQ5OX0.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
+    
+    let myUsername = localStorage.getItem('myUsername') || 'demo_user';
+
+    const headers = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json'
+    };
+
+    function showToast(text) {
+      const el = document.getElementById('toast-notif');
+      el.textContent = text;
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    async function initWallet() {
+      document.getElementById('user-badge').textContent = `@${myUsername}`;
+      await fetchBalance();
+      await fetchHistory();
+    }
+
+    async function fetchBalance() {
+      try {
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/balances?username=eq.${encodeURIComponent(myUsername)}&select=amount`, { headers });
+        if (!response.ok) return;
+        const rows = await response.json();
+        
+        if (rows.length === 0) {
+          await fetch(`${SUPABASE_URL}/rest/v1/balances`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ username: myUsername, amount: 1000 })
+          });
+          document.getElementById('balance-val').textContent = '1,000';
+        } else {
+          document.getElementById('balance-val').textContent = rows[0].amount.toLocaleString();
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function fetchHistory() {
+      const historyWrapper = document.getElementById('history-wrapper');
+      try {
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/transactions?or=(sender.eq.${encodeURIComponent(myUsername)},recipient.eq.${encodeURIComponent(myUsername)})&order=created_at.desc&limit=10`, { headers });
+        if (!response.ok) return;
+        const rows = await response.json();
+
+        if (rows.length === 0) {
+          historyWrapper.innerHTML = '<div style="color:var(--text-muted); text-align:center; padding-top:20px; font-size:14px;">No transactions yet</div>';
+          return;
+        }
+
+        historyWrapper.innerHTML = '';
+        rows.forEach(tx => {
+          const isSender = tx.sender === myUsername;
+          const displayUser = isSender ? `@${tx.recipient}` : `@${tx.sender}`;
+          const displayPrefix = isSender ? 'Sent to ' : 'Received from ';
+          const displayAmt = isSender ? `-${tx.amount}` : `+${tx.amount}`;
+          const cssClass = isSender ? 'amount-negative' : 'amount-positive';
+          
+          const timeFormatted = new Date(tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          const div = document.createElement('div');
+          div.className = 'history-item';
+          div.innerHTML = `
+            <div class="details">
+              <span class="party">${displayPrefix}${displayUser}</span>
+              <span class="time">${timeFormatted}</span>
+            </div>
+            <span class="${cssClass}">${displayAmt}</span>
+          `;
+          historyWrapper.appendChild(div);
+        });
+      } catch (err) {
+        historyWrapper.innerHTML = '<div style="color:var(--accent-red); font-size:13px; text-align:center;">Failed loading updates</div>';
+      }
+    }
+
+    document.getElementById('send-currency-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('send-currency-btn');
+      const targetUser = document.getElementById('recipient-input').value.trim();
+      const amountRaw = document.getElementById('amount-input').value.trim();
+      const amount = parseInt(amountRaw, 10);
+
+      if (!targetUser || isNaN(amount) || amount <= 0) {
+        showToast('Enter a valid username and amount');
+        return;
+      }
+
+      if (targetUser.toLowerCase() === myUsername.toLowerCase()) {
+        showToast('You cannot send to yourself');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+
+      try {
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/transfer_currency`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            sender_username: myUsername,
+            recipient_username: targetUser,
+            transfer_amount: amount
+          })
+        });
+
+        const statusMsg = await response.json();
+
+        if (response.ok && statusMsg === 'Success') {
+          showToast(`Sent ${amount} BP successfully`);
+          document.getElementById('recipient-input').value = '';
+          document.getElementById('amount-input').value = '';
+          modal.classList.remove('open');
+          await fetchBalance();
+          await fetchHistory();
+        } else {
+          showToast(statusMsg.message || statusMsg || 'Transaction failed');
+        }
+      } catch (err) {
+        showToast('Connection error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send';
+      }
+    });
+
+    initWallet();
+    setInterval(() => {
+      fetchBalance();
+      fetchHistory();
+    }, 8000);
+    // --- YOUR EXACT UNALTERED JAVASCRIPT LOGIC END ---
+  </script>
+</body>
+</html>
