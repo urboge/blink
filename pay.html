@@ -6,7 +6,6 @@
   <title>Blink Pay</title>
   <style>
     :root {
-      /* Revolut Ultra-Clean Minimalist Dark Palette */
       --bg-main: #000000;
       --bg-surface: #121418;
       --bg-field: #1c1f26;
@@ -37,11 +36,10 @@
 
     .wallet-container {
       width: 100%;
-      max-width: 390px; /* Standard phone width for crisp scaling */
+      max-width: 390px;
       padding: 12px;
     }
 
-    /* Revolut Premium Profile Header */
     .header {
       display: flex;
       align-items: center;
@@ -66,7 +64,6 @@
       letter-spacing: -0.1px;
     }
 
-    /* Large Minimal Balance Focal Point */
     .balance-card {
       padding: 16px 0;
       text-align: center;
@@ -88,7 +85,6 @@
       letter-spacing: -2px;
     }
 
-    /* Native Revolut Pill Row Actions */
     .action-row {
       display: flex;
       justify-content: center;
@@ -118,11 +114,8 @@
       color: var(--bg-main);
     }
 
-    .action-btn:active {
-      transform: scale(0.96);
-    }
+    .action-btn:active { transform: scale(0.96); }
 
-    /* Activity Typography Clean Setup */
     .history-section h2 {
       font-size: 12px;
       color: var(--text-muted);
@@ -136,7 +129,7 @@
     .history-list {
       display: flex;
       flex-direction: column;
-      gap: 1px; /* Creates clean hairline divider separation natively */
+      gap: 1px;
       background: rgba(255,255,255,0.03);
       border-radius: 20px;
       overflow: hidden;
@@ -153,41 +146,18 @@
       font-size: 15px;
     }
 
-    .history-item .details {
-      display: flex;
-      flex-direction: column;
-    }
+    .history-item .details { display: flex; flex-direction: column; }
+    .history-item .party { font-weight: 600; color: var(--text-main); letter-spacing: -0.2px; }
+    .history-item .time { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
 
-    .history-item .party {
-      font-weight: 600;
-      color: var(--text-main);
-      letter-spacing: -0.2px;
-    }
+    .amount-positive { color: var(--accent-green); font-weight: 600; }
+    .amount-negative { color: var(--text-main); font-weight: 600; }
 
-    .history-item .time {
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-top: 3px;
-    }
-
-    .amount-positive {
-      color: var(--accent-green);
-      font-weight: 600;
-    }
-
-    .amount-negative {
-      color: var(--text-main);
-      font-weight: 600;
-    }
-
-    /* Premium Bottom Sheet Modal Custom Overlay */
     .modal-overlay {
       position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      background: rgba(0, 0, 0, 0.7);
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.7);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       z-index: 1000;
@@ -196,13 +166,10 @@
       justify-content: center;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: opacity 0.25s cubic-bezier(0.4,0,0.2,1);
     }
 
-    .modal-overlay.open {
-      opacity: 1;
-      pointer-events: auto;
-    }
+    .modal-overlay.open { opacity: 1; pointer-events: auto; }
 
     .modal-content {
       background: var(--bg-surface);
@@ -212,12 +179,10 @@
       border-top-right-radius: 28px;
       padding: 24px 24px 40px 24px;
       transform: translateY(100%);
-      transition: transform 0.28s cubic-bezier(0.15, 0.85, 0.35, 1);
+      transition: transform 0.28s cubic-bezier(0.15,0.85,0.35,1);
     }
 
-    .modal-overlay.open .modal-content {
-      transform: translateY(0);
-    }
+    .modal-overlay.open .modal-content { transform: translateY(0); }
 
     .modal-header {
       display: flex;
@@ -226,18 +191,13 @@
       margin-bottom: 24px;
     }
 
-    .modal-header h3 {
-      font-size: 19px;
-      font-weight: 700;
-      letter-spacing: -0.3px;
-    }
+    .modal-header h3 { font-size: 19px; font-weight: 700; letter-spacing: -0.3px; }
 
     .close-modal-btn {
       background: var(--bg-field);
       border: none;
       color: var(--text-main);
-      width: 32px;
-      height: 32px;
+      width: 32px; height: 32px;
       border-radius: 50%;
       font-size: 12px;
       cursor: pointer;
@@ -246,13 +206,8 @@
       justify-content: center;
     }
 
-    .form-section {
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
+    .form-section { display: flex; flex-direction: column; gap: 14px; }
 
-    /* Chat Contact Selector Pillbox */
     .contacts-title {
       font-size: 11px;
       color: var(--text-muted);
@@ -281,23 +236,10 @@
       transition: background 0.1s ease;
     }
 
-    .contact-pill:hover {
-      background: #2a2f3a;
-    }
+    .contact-pill:hover { background: #2a2f3a; }
 
-    .input-wrapper {
-      position: relative;
-      display: flex;
-      align-items: center;
-    }
-
-    .input-wrapper .prefix {
-      position: absolute;
-      left: 18px;
-      color: var(--text-muted);
-      font-weight: 600;
-      font-size: 16px;
-    }
+    .input-wrapper { position: relative; display: flex; align-items: center; }
+    .input-wrapper .prefix { position: absolute; left: 18px; color: var(--text-muted); font-weight: 600; font-size: 16px; }
 
     input {
       width: 100%;
@@ -311,19 +253,9 @@
       outline: none;
     }
 
-    .with-prefix {
-      padding-left: 36px;
-    }
-
-    input::placeholder {
-      color: var(--text-muted);
-    }
-
-    input::-webkit-outer-spin-button,
-    input::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
+    .with-prefix { padding-left: 36px; }
+    input::placeholder { color: var(--text-muted); }
+    input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
     .send-btn {
       background: var(--text-main);
@@ -338,16 +270,11 @@
       margin-top: 6px;
     }
 
-    .send-btn:disabled {
-      background: var(--bg-field);
-      color: var(--text-muted);
-      cursor: not-allowed;
-    }
+    .send-btn:disabled { background: var(--bg-field); color: var(--text-muted); cursor: not-allowed; }
 
-    /* iOS-Style Toast Alert Notification */
     .toast {
       position: fixed;
-      top: 24px; /* Repositioned to top screen drop down for true Revolut alert styling */
+      top: 24px;
       left: 50%;
       transform: translateX(-50%) translateY(-100px);
       background: var(--bg-surface);
@@ -358,16 +285,12 @@
       font-weight: 600;
       z-index: 2000;
       opacity: 0;
-      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s;
+      transition: transform 0.3s cubic-bezier(0.16,1,0.3,1), opacity 0.15s;
       box-shadow: 0 12px 36px rgba(0,0,0,0.6);
     }
 
-    .toast.show {
-      transform: translateX(-50%) translateY(0);
-      opacity: 1;
-    }
+    .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
-    /* Clean viewport scrollbars removal */
     ::-webkit-scrollbar { width: 0px; height: 0px; }
   </style>
 </head>
@@ -382,6 +305,7 @@
     <div class="balance-card">
       <span>Available Balance</span>
       <strong id="balance-val">0</strong>
+      <span id="balance-exact" style="font-size:12px;color:#8e94a1;margin-top:4px;letter-spacing:0;font-weight:400;display:none;"></span>
     </div>
 
     <div class="action-row">
@@ -401,15 +325,9 @@
         <h3>Send Money</h3>
         <button class="close-modal-btn" id="trigger-modal-close">✕</button>
       </div>
-      
       <div class="form-section">
         <div class="contacts-title">Select Chat Contact</div>
-        <div class="contacts-row" id="contacts-container">
-          <div class="contact-pill" onclick="document.getElementById('recipient-input').value='alex_dev'">@alex_dev</div>
-          <div class="contact-pill" onclick="document.getElementById('recipient-input').value='sarah_k'">@sarah_k</div>
-          <div class="contact-pill" onclick="document.getElementById('recipient-input').value='john_doe'">@john_doe</div>
-        </div>
-
+        <div class="contacts-row" id="contacts-container"></div>
         <div class="input-wrapper">
           <span class="prefix">@</span>
           <input type="text" id="recipient-input" class="with-prefix" placeholder="username">
@@ -423,20 +341,19 @@
   <div id="toast-notif" class="toast">Success</div>
 
   <script>
-    // --- UI Modal Toggle Additions ---
     const modal = document.getElementById('send-modal');
     document.getElementById('trigger-modal-open').addEventListener('click', () => modal.classList.add('open'));
     document.getElementById('trigger-modal-close').addEventListener('click', () => modal.classList.remove('open'));
-    modal.addEventListener('click', (e) => { if(e.target === modal) modal.classList.remove('open'); });
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('open'); });
 
     try {
       const contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
-      if(contacts.length > 0) {
+      if (contacts.length > 0) {
         const container = document.getElementById('contacts-container');
         container.innerHTML = '';
         contacts.forEach(c => {
           const name = c.username || c;
-          if(name && name !== myUsername) {
+          if (name && name !== myUsername) {
             const pill = document.createElement('div');
             pill.className = 'contact-pill';
             pill.textContent = `@${name}`;
@@ -445,12 +362,11 @@
           }
         });
       }
-    } catch(e){}
+    } catch(e) {}
 
-    // --- YOUR EXACT UNALTERED JAVASCRIPT LOGIC START ---
     const SUPABASE_URL = 'https://gkrfiyalbjbgkjevmpod.supabase.co';
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrcmZpeWFsYmpiZ2tqZXZtcG9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjA0OTksImV4cCI6MjA5NzE5NjQ5OX0.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
-    
+
     let myUsername = localStorage.getItem('myUsername') || 'demo_user';
 
     const headers = {
@@ -458,6 +374,18 @@
       'Authorization': `Bearer ${SUPABASE_KEY}`,
       'Content-Type': 'application/json'
     };
+
+    // ─── NUMBER FORMATTER ────────────────────────────────────────────────────────
+    // Shortens large BP amounts: 1500 → 1.5k, 2000000 → 2m, etc.
+    function formatBP(n) {
+      if (n >= 1e18) return (n / 1e18).toFixed(1).replace(/\.0$/, '') + 'q';
+      if (n >= 1e15) return (n / 1e15).toFixed(1).replace(/\.0$/, '') + 'q';
+      if (n >= 1e12) return (n / 1e12).toFixed(1).replace(/\.0$/, '') + 't';
+      if (n >= 1e9)  return (n / 1e9 ).toFixed(1).replace(/\.0$/, '') + 'b';
+      if (n >= 1e6)  return (n / 1e6 ).toFixed(1).replace(/\.0$/, '') + 'm';
+      if (n >= 1e3)  return (n / 1e3 ).toFixed(1).replace(/\.0$/, '') + 'k';
+      return n.toLocaleString();
+    }
 
     function showToast(text) {
       const el = document.getElementById('toast-notif');
@@ -472,21 +400,34 @@
       await fetchHistory();
     }
 
+    function setBalance(amount) {
+      const shortened = formatBP(amount);
+      document.getElementById('balance-val').textContent = shortened;
+      const exactEl = document.getElementById('balance-exact');
+      // Only show the full number if it was actually shortened
+      if (shortened !== amount.toLocaleString() && shortened !== String(amount)) {
+        exactEl.textContent = amount.toLocaleString();
+        exactEl.style.display = 'block';
+      } else {
+        exactEl.style.display = 'none';
+      }
+    }
+
     async function fetchBalance() {
       try {
         const response = await fetch(`${SUPABASE_URL}/rest/v1/balances?username=eq.${encodeURIComponent(myUsername)}&select=amount`, { headers });
         if (!response.ok) return;
         const rows = await response.json();
-        
+
         if (rows.length === 0) {
           await fetch(`${SUPABASE_URL}/rest/v1/balances`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ username: myUsername, amount: 1000 })
           });
-          document.getElementById('balance-val').textContent = '1,000';
+          setBalance(1000);
         } else {
-          document.getElementById('balance-val').textContent = rows[0].amount.toLocaleString();
+          setBalance(rows[0].amount);
         }
       } catch (err) {
         console.error(err);
@@ -501,7 +442,7 @@
         const rows = await response.json();
 
         if (rows.length === 0) {
-          historyWrapper.innerHTML = '<div style="color:var(--text-muted); text-align:center; padding-top:20px; font-size:14px;">No transactions yet</div>';
+          historyWrapper.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding-top:20px;font-size:14px;">No transactions yet</div>';
           return;
         }
 
@@ -510,9 +451,8 @@
           const isSender = tx.sender === myUsername;
           const displayUser = isSender ? `@${tx.recipient}` : `@${tx.sender}`;
           const displayPrefix = isSender ? 'Sent to ' : 'Received from ';
-          const displayAmt = isSender ? `-${tx.amount}` : `+${tx.amount}`;
+          const displayAmt = isSender ? `-${formatBP(tx.amount)}` : `+${formatBP(tx.amount)}`;
           const cssClass = isSender ? 'amount-negative' : 'amount-positive';
-          
           const timeFormatted = new Date(tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
           const div = document.createElement('div');
@@ -527,7 +467,7 @@
           historyWrapper.appendChild(div);
         });
       } catch (err) {
-        historyWrapper.innerHTML = '<div style="color:var(--accent-red); font-size:13px; text-align:center;">Failed loading updates</div>';
+        historyWrapper.innerHTML = '<div style="color:var(--accent-red);font-size:13px;text-align:center;">Failed loading updates</div>';
       }
     }
 
@@ -564,7 +504,7 @@
         const statusMsg = await response.json();
 
         if (response.ok && statusMsg === 'Success') {
-          showToast(`Sent ${amount} BP successfully`);
+          showToast(`Sent ${formatBP(amount)} BP successfully`);
           document.getElementById('recipient-input').value = '';
           document.getElementById('amount-input').value = '';
           modal.classList.remove('open');
@@ -582,11 +522,7 @@
     });
 
     initWallet();
-    setInterval(() => {
-      fetchBalance();
-      fetchHistory();
-    }, 8000);
-    // --- YOUR EXACT UNALTERED JAVASCRIPT LOGIC END ---
+    setInterval(() => { fetchBalance(); fetchHistory(); }, 8000);
   </script>
 </body>
 </html>
