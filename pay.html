@@ -423,9 +423,9 @@
           await fetch(`${SUPABASE_URL}/rest/v1/balances`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ username: myUsername, amount: 1000 })
+            body: JSON.stringify({ username: myUsername, amount: 500 })
           });
-          setBalance(1000);
+          setBalance(500);
         } else {
           setBalance(rows[0].amount);
         }
