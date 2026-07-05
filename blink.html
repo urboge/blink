@@ -151,6 +151,19 @@
       <span class="copy-hint">Copy</span>
     </div>
 
+    <!-- PREMIUM BANNER -->
+    <div id="premium-banner" style="display:none;">
+      <div id="premium-banner-inner">
+        <span id="premium-banner-icon">⚡</span>
+        <div id="premium-banner-text">
+          <strong id="premium-banner-title">Try Blink Premium</strong>
+          <span id="premium-banner-sub">Hide read receipts · Profile badge</span>
+        </div>
+        <button id="premium-banner-btn">Get Pro</button>
+      </div>
+      <button id="premium-banner-close">✕</button>
+    </div>
+
     <div id="contacts-list"></div>
 
     <!-- STUDY BUTTON -->
@@ -198,6 +211,64 @@
       </label>
     </div>
     <p class="settings-note">Changing your username will notify all your contacts automatically.</p>
+
+    <!-- PREMIUM FEATURES SECTION -->
+    <div class="settings-row" id="settings-row-receipts">
+      <div>
+        <div class="settings-label">Hide Read Receipts <span class="premium-tag">PRO</span></div>
+        <div style="font-size:11px;color:#8e8e93;margin-top:2px;" id="receipts-hint">Others see "Seen" when you read</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="hide-receipts-toggle">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="settings-row" id="settings-row-theme">
+      <div>
+        <div class="settings-label">Light Mode <span class="premium-tag">MAX</span></div>
+        <div style="font-size:11px;color:#8e8e93;margin-top:2px;" id="theme-hint">Currently dark</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="light-mode-toggle">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="settings-row" id="settings-row-accent">
+      <div>
+        <div class="settings-label">Accent Color <span class="premium-tag">MAX</span></div>
+        <div style="font-size:11px;color:#8e8e93;margin-top:2px;">Bubbles, buttons, badges</div>
+      </div>
+      <div id="accent-picker-wrap">
+        <div id="accent-swatches"></div>
+        <div id="accent-hex-row">
+          <span style="font-size:11px;color:#8e8e93;">#</span>
+          <input type="text" id="accent-hex-input" maxlength="6" placeholder="2563eb" spellcheck="false">
+          <input type="color" id="accent-color-native" style="width:28px;height:28px;border:none;background:none;cursor:pointer;padding:0;">
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-row" id="settings-row-badge">
+      <div>
+        <div class="settings-label">Profile Emoji <span class="premium-tag">PRO</span></div>
+        <div style="font-size:11px;color:#8e8e93;margin-top:2px;">Small emoji shown next to your name</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span id="badge-current-emoji" style="font-size:20px;cursor:pointer;display:none;"></span>
+        <button class="settings-mini-btn" id="settings-pick-emoji-btn">Pick</button>
+        <button class="settings-mini-btn danger" id="settings-remove-badge" style="display:none;">Remove</button>
+      </div>
+    </div>
+    <input type="file" id="badge-file-input" accept="image/*" style="display:none;">
+
+    <!-- EMOJI PICKER PANEL -->
+    <div id="badge-emoji-picker" style="display:none;">
+      <div id="badge-emoji-grid"></div>
+    </div>
+
+    <button class="settings-action-btn premium-settings-btn" id="settings-premium-btn" style="margin-top:8px;">⚡ Blink Premium</button>
     <button class="settings-action-btn" id="settings-sync-btn" style="margin-top:8px;">🔄 Sync Devices</button>
     <button class="settings-action-btn" id="settings-feedback-btn" style="margin-top:8px;">🐛 Report a Bug / Feedback</button>
     <div id="manage-devices-section" style="display:none;">
@@ -206,6 +277,51 @@
     </div>
     <button class="settings-action-btn danger" id="settings-remove-story" style="margin-top:8px; display:none;">Remove My Story</button>
     <button class="settings-action-btn danger" id="settings-remove-account" style="margin-top:8px;">Remove Account</button>
+  </div>
+</div>
+
+<!-- PREMIUM MODAL -->
+<div class="modal-overlay" id="premium-modal">
+  <div id="premium-modal-inner">
+    <button id="premium-modal-close" class="premium-close-btn">✕</button>
+    <div id="premium-modal-header">
+      <div id="premium-modal-icon">⚡</div>
+      <h2>Blink Premium</h2>
+      <p>Unlock powerful features with BP you've already earned</p>
+    </div>
+    <div id="premium-cards">
+      <!-- PRO CARD -->
+      <div class="premium-card" id="card-pro">
+        <div class="pcard-top">
+          <div class="pcard-badge pro-badge">PRO</div>
+          <div class="pcard-price">500 <span>BP / month</span></div>
+        </div>
+        <ul class="pcard-features">
+          <li><span class="pcheck">✓</span> Hide read receipts</li>
+          <li><span class="pcheck">✓</span> Profile badge image</li>
+          <li><span class="pcheck">✓</span> More features coming</li>
+        </ul>
+        <button class="pcard-btn pro-btn" id="buy-pro-btn">Get Pro</button>
+      </div>
+      <!-- MAX CARD -->
+      <div class="premium-card max-card" id="card-max">
+        <div class="pcard-popular">BEST VALUE</div>
+        <div class="pcard-top">
+          <div class="pcard-badge max-badge">MAX</div>
+          <div class="pcard-price">2,000 <span>BP / month</span></div>
+        </div>
+        <ul class="pcard-features">
+          <li><span class="pcheck">✓</span> Everything in Pro</li>
+          <li><span class="pcheck">✓</span> Light / Dark mode</li>
+          <li><span class="pcheck">✓</span> Custom accent color</li>
+          <li><span class="pcheck">✓</span> Animated badge glow</li>
+          <li><span class="pcheck">✓</span> 48h message history</li>
+          <li><span class="pcheck">✓</span> Multi-device sync</li>
+        </ul>
+        <button class="pcard-btn max-btn" id="buy-max-btn">Get Max</button>
+      </div>
+    </div>
+    <p id="premium-modal-note">Subscriptions last 30 days. Your data is saved if you let it lapse and re-subscribe.</p>
   </div>
 </div>
 
