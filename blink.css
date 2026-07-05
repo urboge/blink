@@ -91,9 +91,193 @@ input, textarea, select {
   --contact-active: rgba(255,255,255,0.09);
   --modal-bg: #18181c;
   --search-bg: rgba(255,255,255,0.06);
-  --accent: #3b82f6;
-  --accent-dim: rgba(59,130,246,0.15);
+  --accent: #2563eb;
+  --accent-rgb: 37,99,235;
+  --accent-dim: rgba(37,99,235,0.15);
 }
+
+/* ─── LIGHT MODE ──────────────────────────────────────────────────────────── */
+body.light-mode {
+  --bg: #f0f0f5;
+  --sidebar-bg: #ffffff;
+  --chat-bg: #f0f0f5;
+  --bubble-out: var(--accent);
+  --bubble-in: #e4e4ea;
+  --text-primary: #111114;
+  --text-secondary: #6b6b72;
+  --divider: rgba(0,0,0,0.09);
+  --input-bg: #ffffff;
+  --input-border: rgba(0,0,0,0.12);
+  --contact-hover: rgba(0,0,0,0.05);
+  --contact-active: rgba(var(--accent-rgb),0.1);
+  --modal-bg: #ffffff;
+  --search-bg: rgba(0,0,0,0.06);
+}
+
+/* Core surfaces */
+body.light-mode { background: var(--bg); color: var(--text-primary); }
+body.light-mode #app { background: var(--bg); }
+body.light-mode #splash,
+body.light-mode #welcome-screen { background: #f0f0f5; }
+
+/* Sidebar */
+body.light-mode #sidebar { background: #ffffff; border-right: 1px solid rgba(0,0,0,0.09); }
+body.light-mode #sidebar-header h1 { color: #111114; }
+body.light-mode #my-code-bar { background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.08); }
+body.light-mode #search { background: rgba(0,0,0,0.05); color: #111114; }
+body.light-mode #search-wrap { background: transparent; }
+
+/* Buttons in sidebar */
+body.light-mode #dots-menu-btn { color: #111114; }
+body.light-mode #dots-menu-btn:hover { background: rgba(0,0,0,0.06); }
+body.light-mode #dots-dropdown { background: #ffffff; border-color: rgba(0,0,0,0.1); box-shadow: 0 8px 28px rgba(0,0,0,0.15); }
+body.light-mode .dots-item { color: #111114; }
+body.light-mode .dots-item:hover { background: rgba(0,0,0,0.05); }
+body.light-mode #pay-balance-btn { background: rgba(var(--accent-rgb),0.1); border-color: rgba(var(--accent-rgb),0.25); }
+body.light-mode #blink-camera-btn-small { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.1); }
+
+/* Contact list */
+body.light-mode .contact-item { color: #111114; }
+body.light-mode .contact-item:hover { background: rgba(0,0,0,0.04); }
+body.light-mode .contact-item.active { background: rgba(var(--accent-rgb),0.08); box-shadow: inset 3px 0 0 var(--accent); }
+body.light-mode .contact-name { color: #111114; }
+body.light-mode .contact-preview { color: #6b6b72; }
+
+/* Chat area */
+body.light-mode #chat-panel { background: var(--bg); }
+body.light-mode #chat-header { background: rgba(240,240,245,0.85); }
+body.light-mode #chat-header-name { color: #111114; }
+body.light-mode #chat-subheader { color: #6b6b72; }
+body.light-mode .msg-row.received .bubble { background: #e4e4ea; color: #111114; }
+body.light-mode .msg-row.sent .bubble { color: #ffffff; }
+body.light-mode .msg-time-label,
+body.light-mode .msg-seen { color: #6b6b72; }
+
+/* Input bar */
+body.light-mode #input-area::before { background: linear-gradient(to bottom, transparent, rgba(240,240,245,0.7) 45%, rgba(240,240,245,0.95)); }
+body.light-mode #msg-input-wrap { background: rgba(255,255,255,0.85); border-color: rgba(0,0,0,0.12); }
+body.light-mode #msg-input { color: #111114; }
+body.light-mode #msg-input::placeholder { color: #9999a5; }
+body.light-mode .input-btn { background: rgba(255,255,255,0.8); border-color: rgba(0,0,0,0.1); color: #6b6b72; }
+body.light-mode .input-btn:hover { background: rgba(240,240,245,0.9); color: #111114; }
+body.light-mode #send-btn { background: var(--accent); }
+
+/* Modals */
+body.light-mode .modal { background: #ffffff; }
+body.light-mode .modal-overlay { background: rgba(0,0,0,0.4); }
+body.light-mode .modal h2 { color: #111114; }
+body.light-mode .modal input { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.1); color: #111114; }
+body.light-mode .modal input:focus { border-color: var(--accent); }
+body.light-mode .btn-cancel { background: rgba(0,0,0,0.05); color: #111114; }
+body.light-mode .btn-cancel:hover { background: rgba(0,0,0,0.1); }
+body.light-mode .btn-add { background: var(--accent); }
+
+/* Settings panel */
+body.light-mode #settings-panel { background: #ffffff; border-top-color: rgba(0,0,0,0.09); }
+body.light-mode #settings-header { color: #111114; }
+body.light-mode .settings-row { border-top-color: rgba(0,0,0,0.07); }
+body.light-mode .settings-label { color: #6b6b72; }
+body.light-mode .settings-val { color: #111114; }
+body.light-mode .settings-action-btn { background: rgba(0,0,0,0.05); color: #111114; }
+body.light-mode .settings-action-btn:hover { background: rgba(0,0,0,0.09); }
+body.light-mode .settings-action-btn.danger { background: rgba(220,38,38,0.08); color: #dc2626; }
+body.light-mode .settings-mini-btn { background: rgba(0,0,0,0.06); color: #111114; border-color: rgba(0,0,0,0.1); }
+body.light-mode #settings-close { color: #6b6b72; }
+
+/* Sticker panel */
+body.light-mode #sticker-panel { background: rgba(255,255,255,0.95); border-color: rgba(0,0,0,0.1); }
+body.light-mode .sticker-tab { color: #6b6b72; }
+body.light-mode .sticker-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+body.light-mode #create-sticker-btn { background: var(--accent); }
+body.light-mode .sticker-item:hover { background: rgba(0,0,0,0.05); }
+
+/* Reaction + action pickers */
+body.light-mode .reaction-picker { background: #ffffff; border: 1px solid rgba(0,0,0,0.1); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
+body.light-mode .msg-action-row { background: #ffffff; border: 1px solid rgba(0,0,0,0.1); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
+body.light-mode .msg-action-btn { color: #111114; }
+body.light-mode .msg-action-btn:hover { background: rgba(0,0,0,0.05); }
+body.light-mode .msg-action-btn.delete { color: #dc2626; }
+body.light-mode .reaction-badge { background: rgba(0,0,0,0.07); border-color: rgba(0,0,0,0.08); }
+
+/* Reply quote */
+body.light-mode .reply-quote { background: rgba(var(--accent-rgb),0.07); border-color: rgba(var(--accent-rgb),0.3); }
+body.light-mode #reply-preview-bar { background: rgba(255,255,255,0.9); border-color: rgba(var(--accent-rgb),0.3); }
+
+/* Premium banner + modal */
+body.light-mode #premium-banner { background: linear-gradient(135deg, rgba(var(--accent-rgb),0.08), rgba(124,58,237,0.08)); border-color: rgba(var(--accent-rgb),0.2); }
+body.light-mode #premium-banner-title { color: #111114; }
+body.light-mode #premium-modal-inner { background: #f5f5f9; border-color: rgba(var(--accent-rgb),0.15); }
+body.light-mode .premium-card { background: #ffffff; border-color: rgba(0,0,0,0.09); }
+body.light-mode .max-card { background: linear-gradient(160deg, #f0eeff, #ffffff); }
+body.light-mode .pcard-price { color: #111114; }
+body.light-mode .pcard-features li { color: #6b6b72; }
+
+/* Toast */
+body.light-mode #toast { background: #111114; color: #ffffff; }
+
+/* Accent picker */
+body.light-mode #accent-hex-row { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.1); }
+body.light-mode #accent-hex-input { color: #111114; }
+
+/* System messages */
+body.light-mode .system-msg { background: rgba(0,0,0,0.06); color: #6b6b72; }
+
+/* Welcome screen */
+body.light-mode #welcome-input { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.12); color: #111114; }
+body.light-mode #welcome-btn { background: var(--accent); }
+body.light-mode #welcome-box h1 { color: #111114; }
+body.light-mode #welcome-box p { color: #6b6b72; }
+
+/* My code bar */
+body.light-mode #my-code-bar .copy-hint { color: var(--accent); }
+
+/* Study button */
+body.light-mode #study-btn { box-shadow: 0 4px 14px rgba(var(--accent-rgb),0.2); }
+
+/* Group chat bubble sender name */
+body.light-mode .bubble-sender-name { color: var(--accent); }
+
+/* Unread badge always accent colored */
+body.light-mode .unread-badge { background: var(--accent); }
+
+/* Toggle */
+body.light-mode .toggle-slider { background: rgba(0,0,0,0.15); }
+body.light-mode .toggle-switch input:checked + .toggle-slider { background: var(--accent); }
+
+
+/* ─── ACCENT COLOR (applied via CSS var, set by JS) ─────────────────────── */
+/* All accent references now use var(--accent) so one variable swap recolors everything */
+
+/* ─── ANIMATED BADGE GLOW (Max) ──────────────────────────────────────────── */
+.avatar-emoji-badge.max-glow {
+  animation: badgeGlow 2s ease-in-out infinite;
+}
+@keyframes badgeGlow {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(var(--accent-rgb),0.4)); }
+  50%       { filter: drop-shadow(0 0 7px rgba(var(--accent-rgb),0.9)) drop-shadow(0 0 12px rgba(var(--accent-rgb),0.4)); }
+}
+
+/* ─── ACCENT PICKER UI ────────────────────────────────────────────────────── */
+#settings-row-theme, #settings-row-accent { transition: opacity 0.2s; }
+#accent-picker-wrap { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+#accent-swatches { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+.accent-swatch {
+  width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; transition: transform 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+}
+.accent-swatch:hover { transform: scale(1.15); }
+.accent-swatch.active { border-color: var(--text-primary); transform: scale(1.1); }
+#accent-hex-row {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--search-bg); border: 1px solid var(--input-border);
+  border-radius: 8px; padding: 4px 8px;
+}
+#accent-hex-input {
+  background: none; border: none; outline: none; color: var(--text-primary);
+  font-size: 12px; font-family: monospace; width: 58px;
+}
+
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
@@ -1522,3 +1706,165 @@ body {
 }
 #pay-balance-btn:hover { background: rgba(37,99,235,0.2); }
 #pay-balance-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+/* ─── PREMIUM BANNER ──────────────────────────────────────────────────────── */
+#premium-banner {
+  margin: 0 8px 8px; border-radius: 14px;
+  background: linear-gradient(135deg, rgba(37,99,235,0.15), rgba(124,58,237,0.15));
+  border: 1px solid rgba(124,58,237,0.25); padding: 10px 10px 10px 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+#premium-banner-inner {
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
+}
+#premium-banner-icon { font-size: 18px; flex-shrink: 0; }
+#premium-banner-text { flex: 1; min-width: 0; }
+#premium-banner-title { font-size: 12px; font-weight: 700; display: block; color: var(--text-primary); }
+#premium-banner-sub { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+#premium-banner-btn {
+  background: linear-gradient(135deg, #2563eb, #7c3aed); border: none; border-radius: 999px;
+  padding: 6px 12px; color: #fff; font-size: 11px; font-weight: 700;
+  cursor: pointer; flex-shrink: 0; white-space: nowrap;
+}
+#premium-banner-close {
+  background: none; border: none; color: var(--text-secondary); cursor: pointer;
+  font-size: 12px; padding: 2px 4px; flex-shrink: 0; opacity: 0.6;
+}
+#premium-banner-close:hover { opacity: 1; }
+
+/* ─── PREMIUM SETTINGS BUTTON ─────────────────────────────────────────────── */
+.premium-settings-btn {
+  background: linear-gradient(135deg, rgba(37,99,235,0.2), rgba(124,58,237,0.2)) !important;
+  border: 1px solid rgba(124,58,237,0.3) !important;
+  color: #a78bfa !important;
+}
+.premium-settings-btn:hover {
+  background: linear-gradient(135deg, rgba(37,99,235,0.3), rgba(124,58,237,0.3)) !important;
+}
+
+/* ─── PREMIUM MODAL ────────────────────────────────────────────────────────── */
+#premium-modal-inner {
+  width: 100%; max-width: 480px; max-height: 90dvh; overflow-y: auto;
+  background: #0f0f17;
+  border: 1px solid rgba(124,58,237,0.2);
+  border-radius: 24px; padding: 28px 24px 24px;
+  position: relative; gap: 0;
+}
+#premium-modal { align-items: center; }
+#premium-close-btn, .premium-close-btn {
+  position: absolute; top: 16px; right: 16px;
+  background: rgba(255,255,255,0.08); border: none; color: var(--text-secondary);
+  width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 12px;
+}
+#premium-modal-header { text-align: center; margin-bottom: 24px; }
+#premium-modal-icon { font-size: 36px; margin-bottom: 8px; }
+#premium-modal-header h2 {
+  font-size: 20px; font-weight: 800; letter-spacing: -0.4px;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+#premium-modal-header p { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+
+#premium-cards { display: flex; gap: 12px; margin-bottom: 16px; }
+
+.premium-card {
+  flex: 1; border-radius: 18px; padding: 18px 16px;
+  background: #17171f; border: 1px solid rgba(255,255,255,0.08);
+  display: flex; flex-direction: column; gap: 14px; position: relative;
+  transition: border-color 0.2s;
+}
+.max-card {
+  background: linear-gradient(160deg, #16143a, #17171f);
+  border-color: rgba(124,58,237,0.4);
+}
+.pcard-popular {
+  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: #fff; font-size: 9px; font-weight: 800; letter-spacing: 0.8px;
+  padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+}
+.pcard-top { display: flex; flex-direction: column; gap: 6px; }
+.pcard-badge {
+  font-size: 10px; font-weight: 800; letter-spacing: 1px;
+  padding: 3px 10px; border-radius: 999px; width: fit-content;
+}
+.pro-badge { background: rgba(37,99,235,0.2); color: #60a5fa; }
+.max-badge { background: rgba(124,58,237,0.2); color: #a78bfa; }
+.pcard-price {
+  font-size: 22px; font-weight: 800; letter-spacing: -0.5px; color: var(--text-primary);
+}
+.pcard-price span { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+
+.pcard-features { list-style: none; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.pcard-features li { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+.pcheck { color: #34d399; font-size: 11px; flex-shrink: 0; }
+
+.pcard-btn {
+  width: 100%; padding: 11px; border: none; border-radius: 12px;
+  font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity 0.15s;
+}
+.pcard-btn:hover { opacity: 0.88; }
+.pro-btn { background: #2563eb; color: #fff; }
+.max-btn { background: linear-gradient(135deg, #2563eb, #7c3aed); color: #fff; }
+.pcard-btn:disabled { opacity: 0.5; cursor: default; }
+
+#premium-modal-note {
+  font-size: 11px; color: var(--text-secondary); text-align: center; line-height: 1.5;
+}
+
+/* PREMIUM FEATURE TAG */
+.premium-tag {
+  font-size: 9px; font-weight: 800; letter-spacing: 0.5px;
+  background: linear-gradient(135deg, rgba(37,99,235,0.2), rgba(124,58,237,0.2));
+  color: #a78bfa; border-radius: 999px; padding: 2px 6px;
+  vertical-align: middle; margin-left: 4px;
+}
+
+/* PROFILE BADGE */
+.profile-badge {
+  width: 18px; height: 18px; border-radius: 50%;
+  object-fit: cover; display: inline-block;
+  vertical-align: middle; margin-left: 4px;
+  border: 1.5px solid rgba(124,58,237,0.4);
+  flex-shrink: 0;
+}
+#badge-preview img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 2px solid rgba(124,58,237,0.4); }
+
+/* LOCKED PREMIUM ROW */
+.premium-locked { opacity: 0.45; pointer-events: none; cursor: default; }
+
+/* SEEN PREMIUM ICON */
+.seen-premium {
+  font-size: 11px; opacity: 0.7; cursor: default;
+  filter: drop-shadow(0 0 3px rgba(124,58,237,0.5));
+}
+
+/* BADGE EMOJI PICKER */
+#badge-emoji-picker {
+  margin: 0 16px 10px; background: #1c1c1e; border: 1px solid #38383a;
+  border-radius: 14px; padding: 12px;
+}
+#badge-emoji-grid {
+  display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px;
+}
+.badge-emoji-opt {
+  font-size: 22px; text-align: center; padding: 6px 4px; border-radius: 8px;
+  cursor: pointer; transition: background 0.12s; line-height: 1;
+}
+.badge-emoji-opt:hover { background: rgba(255,255,255,0.08); }
+.badge-emoji-opt.selected { background: rgba(37,99,235,0.25); }
+
+/* PROFILE BADGE EMOJI next to name */
+.profile-badge-emoji {
+  font-size: 13px; line-height: 1; margin-left: 4px;
+  vertical-align: middle; display: inline-block;
+}
+
+/* AVATAR EMOJI BADGE — bottom-right corner overlay */
+.avatar-emoji-badge {
+  position: absolute; bottom: -3px; right: -4px;
+  font-size: 13px; line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6));
+  pointer-events: none;
+}
