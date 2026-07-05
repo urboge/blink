@@ -12,7 +12,12 @@ const IMAGE_EXPIRY_MS   = 30 * 24 * 60 * 60 * 1000;
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let myUsername       = '';
 let myAvatar         = '';
+let myBadgeEmoji     = '';     // single emoji badge (Pro/Max feature)
+let hideReadReceipts = false;  // Pro/Max: don't send seen confirmations
+let isLightMode      = false;  // Max: light/dark toggle
+let myAccentColor    = '#2563eb'; // Max: custom accent color
 let avatars          = {};
+let badges           = {}; // username → emoji badge, received from others
 let notificationsOn  = true;
 let contacts         = [];
 let chats            = {};
@@ -83,6 +88,7 @@ function saveGroups()         { ls('groups',         JSON.stringify(groups)); }
 function saveFavStickers()    { ls('favStickers',    JSON.stringify(favStickers)); }
 function saveCustomStickers() { ls('customStickers', JSON.stringify(customStickers)); }
 function saveAvatars()        { ls('avatars',        JSON.stringify(avatars)); }
+function saveBadges()         { ls('badges',          JSON.stringify(badges)); }
 function saveStories()        { ls('stories',        JSON.stringify(stories)); }
 function saveMyStory()        { ls('myStories',       JSON.stringify(myStories)); }
 function saveStreaks()        { ls('streaks',        JSON.stringify(streaks)); }
@@ -572,7 +578,12 @@ async function startApp() {
   favStickers    = JSON.parse(ls('favStickers')    || '[]');
   customStickers = JSON.parse(ls('customStickers') || '[]');
   avatars        = JSON.parse(ls('avatars')        || '{}');
-  myAvatar       = ls('myAvatar') || '';
+  badges         = JSON.parse(ls('badges')         || '{}');
+  myAvatar         = ls('myAvatar') || '';
+  myBadgeEmoji     = ls('myBadgeEmoji') || '';
+  hideReadReceipts = ls('hideReadReceipts') === '1';
+  isLightMode      = ls('isLightMode') === '1';
+  myAccentColor    = ls('myAccentColor') || '#2563eb';
   stories        = JSON.parse(ls('stories')        || '{}');
   myStories      = JSON.parse(ls('myStories')      || 'null');
   if (!myStories) {
@@ -588,7 +599,11 @@ async function startApp() {
   cleanExpiredImages();
   cleanExpiredStories();
   renderContacts();
-  fetchPayBalance(); // show balance in sidebar chip
+  fetchPayBalance();
+  updatePremiumUI(); // apply cached tier instantly — no network wait
+  checkPremiumStatus(); // then verify with Supabase in background
+  applyTheme();
+  applyAccentColor(myAccentColor);
   await loadStickers();
   await registerDevice();
   if (SUPABASE_URL && SUPABASE_KEY) {
@@ -621,6 +636,17 @@ async function setUsername(newUsername, isFirstTime = false) {
 }
 
 // ─── AVATAR ───────────────────────────────────────────────────────────────────
+// Returns a span with the user's premium badge emoji, or ''
+function badgeImgHtml() {
+  if (!myBadgeEmoji || !isPremiumActive()) return '';
+  return `<span class="profile-badge-emoji">${myBadgeEmoji}</span>`;
+}
+
+function getBadge(username) {
+  if (username === myUsername) return (myBadgeEmoji && isPremiumActive()) ? myBadgeEmoji : '';
+  return badges[username] || '';
+}
+
 function avatarColor(code) {
   let n = 0; for (const c of (code||'x')) n += c.charCodeAt(0);
   return AVATAR_COLORS[n % AVATAR_COLORS.length];
@@ -630,23 +656,31 @@ function getAvatar(username) { return username === myUsername ? myAvatar : (avat
 
 function renderAvatarEl(el, username, name, size = 44) {
   const pic = getAvatar(username);
+  const emoji = getBadge(username);
+  const isMax = username === myUsername ? myPremiumTier === 'max' : false;
+  const badgeHtml = emoji
+    ? `<span class="avatar-emoji-badge${isMax ? ' max-glow' : ''}">${emoji}</span>`
+    : '';
   if (pic) {
-    el.innerHTML = `<img src="${pic}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;display:block;">`;
+    el.innerHTML = `<img src="${pic}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;display:block;">${badgeHtml}`;
     el.className = el.className.replace(/av-\S+/g, '').trim() + ' avatar-img';
   } else {
-    el.innerHTML = avatarLetter(name || username);
+    el.innerHTML = avatarLetter(name || username) + badgeHtml;
     el.className = el.className.replace('avatar-img','').trim();
     if (!el.className.includes('av-')) el.className += ' ' + avatarColor(username);
   }
+  el.style.position = 'relative';
 }
 
 function updateMyAvatarUI() {
   const el = document.getElementById('my-avatar-preview');
   if (!el) return;
+  el.style.position = 'relative';
+  const badge = (myBadgeEmoji && isPremiumActive()) ? `<span class="avatar-emoji-badge">${myBadgeEmoji}</span>` : '';
   if (myAvatar) {
-    el.innerHTML = `<img src="${myAvatar}" style="width:52px;height:52px;border-radius:50%;object-fit:cover;display:block;">`;
+    el.innerHTML = `<img src="${myAvatar}" style="width:52px;height:52px;border-radius:50%;object-fit:cover;display:block;">${badge}`;
   } else {
-    el.textContent = avatarLetter(myUsername);
+    el.innerHTML = avatarLetter(myUsername) + badge;
     el.className = 'avatar settings-avatar ' + avatarColor(myUsername);
   }
 }
@@ -1069,6 +1103,231 @@ async function sendVoiceMessage() {
   toast(`Voice sent · ${sizeKB}KB`);
 }
 
+
+// ─── BLINK PREMIUM ───────────────────────────────────────────────────────────
+
+let myPremiumTier = localStorage.getItem('cachedPremiumTier') || null;
+let myPremiumExpiry = localStorage.getItem('cachedPremiumExpiry') ? new Date(localStorage.getItem('cachedPremiumExpiry')) : null;
+
+// Immediately apply cached tier so UI is correct before network call returns
+if (myPremiumExpiry && new Date(myPremiumExpiry) > new Date()) {
+  // cached tier still valid — keep it
+} else {
+  myPremiumTier = null;
+  myPremiumExpiry = null;
+}
+
+async function checkPremiumStatus() {
+  if (!myUsername) return;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/subscriptions?username=eq.${encodeURIComponent(myUsername)}&select=tier,expires_at`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (rows.length && new Date(rows[0].expires_at) > new Date()) {
+      myPremiumTier = rows[0].tier;
+      myPremiumExpiry = new Date(rows[0].expires_at);
+      localStorage.setItem('cachedPremiumTier', myPremiumTier);
+      localStorage.setItem('cachedPremiumExpiry', myPremiumExpiry.toISOString());
+    } else {
+      myPremiumTier = null;
+      myPremiumExpiry = null;
+      localStorage.removeItem('cachedPremiumTier');
+      localStorage.removeItem('cachedPremiumExpiry');
+    }
+  } catch(e) {}
+  updatePremiumUI();
+}
+
+function isPremiumActive() { return !!myPremiumTier; }
+
+// ─── THEME & ACCENT ───────────────────────────────────────────────────────────
+
+const ACCENT_PRESETS = [
+  '#2563eb', // Blue (default)
+  '#7c3aed', // Purple
+  '#db2777', // Pink
+  '#dc2626', // Red
+  '#ea580c', // Orange
+  '#d97706', // Amber
+  '#16a34a', // Green
+  '#0d9488', // Teal
+  '#0891b2', // Cyan
+  '#ffffff', // White
+];
+
+function applyTheme() {
+  document.body.classList.toggle('light-mode', isLightMode);
+  const hint = document.getElementById('theme-hint');
+  if (hint) hint.textContent = isLightMode ? 'Currently light' : 'Currently dark';
+  const toggle = document.getElementById('light-mode-toggle');
+  if (toggle) toggle.checked = isLightMode;
+}
+
+function applyAccentColor(hex) {
+  // Normalize — ensure it starts with #
+  hex = hex.startsWith('#') ? hex : '#' + hex;
+  // Validate 6-char hex
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+  myAccentColor = hex;
+  // Parse to RGB for the rgba() usages
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  const root = document.documentElement;
+  root.style.setProperty('--accent', hex);
+  root.style.setProperty('--accent-rgb', `${r},${g},${b}`);
+  root.style.setProperty('--accent-dim', `rgba(${r},${g},${b},0.15)`);
+  root.style.setProperty('--bubble-out', hex);
+  // Update hex input and native color picker if they exist
+  const hexInput = document.getElementById('accent-hex-input');
+  const nativePicker = document.getElementById('accent-color-native');
+  if (hexInput) hexInput.value = hex.slice(1);
+  if (nativePicker) nativePicker.value = hex;
+  // Update swatch active state
+  document.querySelectorAll('.accent-swatch').forEach(s => {
+    s.classList.toggle('active', s.dataset.color.toLowerCase() === hex.toLowerCase());
+  });
+}
+
+function buildAccentSwatches() {
+  const container = document.getElementById('accent-swatches');
+  if (!container || container.children.length > 0) return;
+  ACCENT_PRESETS.forEach(color => {
+    const s = document.createElement('div');
+    s.className = 'accent-swatch' + (color.toLowerCase() === myAccentColor.toLowerCase() ? ' active' : '');
+    s.dataset.color = color;
+    s.style.background = color;
+    if (color === '#ffffff') s.style.border = '2px solid #aaa';
+    s.addEventListener('click', () => {
+      if (!isPremiumActive() || myPremiumTier !== 'max') { openPremiumModal(); return; }
+      applyAccentColor(color);
+      ls('myAccentColor', myAccentColor);
+    });
+    container.appendChild(s);
+  });
+}
+
+function updatePremiumUI() {
+  const banner = document.getElementById('premium-banner');
+  if (!banner) return;
+  const isMax = myPremiumTier === 'max';
+  const isPro = isPremiumActive();
+
+  if (!isPro) {
+    if (!sessionStorage.getItem('premiumBannerDismissed')) banner.style.display = 'flex';
+    document.getElementById('settings-row-receipts')?.classList.add('premium-locked');
+    document.getElementById('settings-row-badge')?.classList.add('premium-locked');
+    document.getElementById('settings-row-theme')?.classList.add('premium-locked');
+    document.getElementById('settings-row-accent')?.classList.add('premium-locked');
+  } else {
+    banner.style.display = 'none';
+    document.getElementById('settings-row-receipts')?.classList.remove('premium-locked');
+    document.getElementById('settings-row-badge')?.classList.remove('premium-locked');
+    // Theme and accent only for Max
+    document.getElementById('settings-row-theme')?.classList.toggle('premium-locked', !isMax);
+    document.getElementById('settings-row-accent')?.classList.toggle('premium-locked', !isMax);
+    updatePremiumBadgeInSettings();
+    updateReceiptToggleUI();
+    updateBadgePreviewUI();
+    buildAccentSwatches();
+    applyTheme();
+  }
+  renderPremiumCardStates();
+}
+
+function updatePremiumBadgeInSettings() {
+  const btn = document.getElementById('settings-premium-btn');
+  if (!btn) return;
+  if (myPremiumTier) {
+    const daysLeft = Math.ceil((myPremiumExpiry - Date.now()) / 86400000);
+    btn.textContent = `⚡ ${myPremiumTier === 'max' ? 'Max' : 'Pro'} — ${daysLeft}d left`;
+  } else {
+    btn.textContent = '⚡ Blink Premium';
+  }
+}
+
+function updateReceiptToggleUI() {
+  const toggle = document.getElementById('hide-receipts-toggle');
+  const hint   = document.getElementById('receipts-hint');
+  if (!toggle) return;
+  toggle.checked = hideReadReceipts;
+  if (hint) hint.textContent = hideReadReceipts ? 'Others see ⚡ instead of Seen' : 'Others see "Seen" when you read';
+}
+
+function updateBadgePreviewUI() {
+  const emojiEl   = document.getElementById('badge-current-emoji');
+  const removeBtn = document.getElementById('settings-remove-badge');
+  if (!emojiEl) return;
+  if (myBadgeEmoji) {
+    emojiEl.textContent = myBadgeEmoji;
+    emojiEl.style.display = 'inline';
+    if (removeBtn) removeBtn.style.display = 'inline-block';
+  } else {
+    emojiEl.style.display = 'none';
+    emojiEl.textContent = '';
+    if (removeBtn) removeBtn.style.display = 'none';
+  }
+}
+
+function renderPremiumCardStates() {
+  const proBtnEl  = document.getElementById('buy-pro-btn');
+  const maxBtnEl  = document.getElementById('buy-max-btn');
+  if (!proBtnEl || !maxBtnEl) return;
+  if (myPremiumTier === 'pro') {
+    proBtnEl.textContent = 'Active ✓'; proBtnEl.disabled = true;
+    maxBtnEl.textContent = 'Upgrade to Max'; maxBtnEl.disabled = false;
+  } else if (myPremiumTier === 'max') {
+    proBtnEl.textContent = 'Upgrade done'; proBtnEl.disabled = true;
+    maxBtnEl.textContent = 'Active ✓'; maxBtnEl.disabled = true;
+  } else {
+    proBtnEl.textContent = 'Get Pro'; proBtnEl.disabled = false;
+    maxBtnEl.textContent = 'Get Max'; maxBtnEl.disabled = false;
+  }
+}
+
+function openPremiumModal() {
+  renderPremiumCardStates();
+  document.getElementById('premium-modal').classList.add('open');
+  document.getElementById('settings-overlay').classList.remove('open');
+}
+function closePremiumModal() { document.getElementById('premium-modal').classList.remove('open'); }
+
+async function purchasePremium(tier) {
+  const price = tier === 'pro' ? 500 : 2000;
+  const tierLabel = tier === 'pro' ? 'Pro' : 'Max';
+  const confirmText = myPremiumTier
+    ? `Switch to ${tierLabel} for ${price} BP? Your subscription will be updated and extended by 30 days.`
+    : `Subscribe to Blink ${tierLabel} for ${price} BP/month?`;
+  if (!confirm(confirmText)) return;
+
+  const btnId = tier === 'pro' ? 'buy-pro-btn' : 'buy-max-btn';
+  const btn = document.getElementById(btnId);
+  btn.disabled = true; btn.textContent = 'Processing...';
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/purchase_subscription`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify({ p_username: myUsername, p_tier: tier })
+    });
+    const result = await res.json();
+    if (res.ok && result === 'Success') {
+      toast(`Welcome to Blink ${tierLabel}! ⚡`);
+      closePremiumModal();
+      await checkPremiumStatus();
+      fetchPayBalance();
+    } else {
+      toast(result?.message || result || 'Purchase failed');
+      renderPremiumCardStates();
+    }
+  } catch(e) {
+    toast('Connection error — try again');
+    renderPremiumCardStates();
+  }
+}
 
 // ─── STUDY NOTES ────────────────────────────────────────────────────────────────
 
@@ -2489,7 +2748,12 @@ function renderContacts(filter = '') {
     div.className = 'contact-item' + (isActive ? ' active' : '') + (isSelected ? ' selected' : '');
     const avatarHtml = type === 'group'
       ? `<div class="avatar group-avatar">${groupAvatarSVG(avatarColor(data.id))}</div>`
-      : `<div class="avatar ${getAvatar(data.code) ? 'avatar-img' : avatarColor(data.code)}">${getAvatar(data.code) ? `<img src="${getAvatar(data.code)}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;display:block;">` : avatarLetter(data.name)}</div>`;
+      : (() => {
+          const emoji = getBadge(data.code);
+          const badge = emoji ? `<span class="avatar-emoji-badge">${emoji}</span>` : '';
+          const pic = getAvatar(data.code);
+          return `<div class="avatar ${pic ? 'avatar-img' : avatarColor(data.code)}" style="position:relative;">${pic ? `<img src="${pic}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;display:block;">` : avatarLetter(data.name)}${badge}</div>`;
+        })();
     if (editMode) {
       div.innerHTML = `<div class="select-circle ${isSelected?'checked':''}"></div>${avatarHtml}<div class="contact-info"><div class="contact-name">${escHtml(data.name)}</div><div class="contact-preview">${escHtml(preview)}</div></div>`;
       div.addEventListener('click', () => toggleSelectContact(id));
@@ -2548,7 +2812,7 @@ function openChat(code) {
   showChat();
 
   if (contacts.find(c => c.code === code)) {
-    pushToSupabase(code, '__read__', 'read_receipt');
+    pushToSupabase(code, '__read__', 'read_receipt', { seenHidden: hideReadReceipts });
   }
 }
 
@@ -2739,7 +3003,8 @@ function renderMessages(code, type = 'dm') {
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
     if (m.sent) {
-      meta.innerHTML = `<span class="msg-seen">${m.seen ? 'Seen' : ''}</span><span class="msg-time-label">${formatTimestamp(m.time)}</span>`;
+      const seenText = m.seen ? (m.seenHidden ? '<span class="seen-premium" title="Read receipts hidden">⚡</span>' : 'Seen') : '';
+      meta.innerHTML = `<span class="msg-seen">${seenText}</span><span class="msg-time-label">${formatTimestamp(m.time)}</span>`;
     } else {
       meta.innerHTML = `<span class="msg-time-label">${formatTimestamp(m.time)}</span>`;
     }
@@ -3124,7 +3389,7 @@ function addMessageToChat(code, msg) {
   if (!msg.sent && ['text','image','sticker'].includes(msg.type)) {
     if (code === activeCode && activeType === 'dm' && document.hasFocus()) {
       if (contacts.find(c => c.code === code)) {
-        pushToSupabase(code, '__read__', 'read_receipt');
+        pushToSupabase(code, '__read__', 'read_receipt', { seenHidden: hideReadReceipts });
       }
     }
   }
@@ -3474,9 +3739,12 @@ async function pollMessages() {
       }
       if (r.type === 'read_receipt') {
         if (chats[r.from]) {
-          chats[r.from].forEach(m => { m.seen = false; });
+          chats[r.from].forEach(m => { m.seen = false; m.seenHidden = false; });
           const lastSent = [...chats[r.from]].reverse().find(m => m.sent);
-          if (lastSent) lastSent.seen = true;
+          if (lastSent) {
+            lastSent.seen = true;
+            lastSent.seenHidden = !!r.seenHidden; // true if recipient has receipts hidden
+          }
           saveChats();
           if (activeCode === r.from) renderMessages(r.from, activeType);
           renderContacts(document.getElementById('search').value);
@@ -3487,6 +3755,16 @@ async function pollMessages() {
         try {
           const { username, avatar } = JSON.parse(r.text);
           avatars[username] = avatar; saveAvatars();
+          renderContacts(document.getElementById('search').value);
+          if (activeCode === username) renderAvatarEl(document.getElementById('chat-avatar'), username, contacts.find(c=>c.code===username)?.name||username, 44);
+        } catch(e) {}
+        return;
+      }
+      if (r.type === 'badge_update') {
+        try {
+          const { username, badge } = JSON.parse(r.text);
+          if (badge) badges[username] = badge; else delete badges[username];
+          saveBadges();
           renderContacts(document.getElementById('search').value);
           if (activeCode === username) renderAvatarEl(document.getElementById('chat-avatar'), username, contacts.find(c=>c.code===username)?.name||username, 44);
         } catch(e) {}
@@ -3645,7 +3923,7 @@ async function pollMessages() {
         return;
       }
 
-      const silentTypes = ['read_receipt','code_change','avatar_update','username_update','story','story_view','story_delete'];
+      const silentTypes = ['read_receipt','code_change','avatar_update','badge_update','username_update','story','story_view','story_delete'];
       if (silentTypes.includes(r.type)) return;
       if (!r.text) return;
       ensureContact(r.from);
@@ -3698,7 +3976,7 @@ function handleSelfSyncRow(r) {
     } catch(e) {}
     return;
   }
-  if (['read_receipt','story','story_delete','story_view','story_like','code_change','avatar_update','contact_sync','group_invite','snap_opened'].includes(r.type)) {
+  if (['read_receipt','story','story_delete','story_view','story_like','code_change','avatar_update','badge_update','contact_sync','group_invite','snap_opened'].includes(r.type)) {
     // These either don't apply across devices the same way, or are already
     // covered by the regular per-device sync mechanisms — skip silently.
     return;
@@ -4012,6 +4290,18 @@ document.getElementById('link-approval-dismiss').addEventListener('click', () =>
 });
 
 // Settings — manual sync trigger
+// Premium
+document.getElementById('settings-premium-btn').addEventListener('click', openPremiumModal);
+document.getElementById('premium-modal-close').addEventListener('click', closePremiumModal);
+document.getElementById('premium-modal').addEventListener('click', e => { if (e.target === document.getElementById('premium-modal')) closePremiumModal(); });
+document.getElementById('buy-pro-btn').addEventListener('click', () => purchasePremium('pro'));
+document.getElementById('buy-max-btn').addEventListener('click', () => purchasePremium('max'));
+document.getElementById('premium-banner-btn').addEventListener('click', openPremiumModal);
+document.getElementById('premium-banner-close').addEventListener('click', () => {
+  document.getElementById('premium-banner').style.display = 'none';
+  sessionStorage.setItem('premiumBannerDismissed', '1');
+});
+
 document.getElementById('settings-sync-btn').addEventListener('click', async () => {
   document.getElementById('settings-overlay').classList.remove('open');
   toast('Checking for other devices...');
@@ -4195,6 +4485,110 @@ document.getElementById('settings-remove-avatar').addEventListener('click', () =
   document.getElementById('settings-overlay').classList.remove('open');
 });
 
+// Premium: badge emoji picker
+const BADGE_EMOJIS = [
+  '⭐','🔥','💎','👑','🎯','🚀','💡','🎨','🎵','📚',
+  '🏆','✨','💫','🌟','⚡','🦋','🌈','🎭','🎪','🎲',
+  '🦁','🐯','🦊','🐺','🦅','🦄','🐉','🌙','☀️','🌊',
+  '❤️','💜','💙','🧡','💚','🖤','🤍','💛','🩷','🩵',
+  '🎸','🎺','🥁','🎹','🎻','🏀','⚽','🎾','🏄','🧗'
+];
+
+function buildEmojiPicker() {
+  const grid = document.getElementById('badge-emoji-grid');
+  if (!grid || grid.children.length > 0) return; // already built
+  BADGE_EMOJIS.forEach(emoji => {
+    const btn = document.createElement('div');
+    btn.className = 'badge-emoji-opt' + (emoji === myBadgeEmoji ? ' selected' : '');
+    btn.textContent = emoji;
+    btn.addEventListener('click', () => {
+      myBadgeEmoji = emoji;
+      ls('myBadgeEmoji', emoji);
+      updateBadgePreviewUI();
+      document.getElementById('badge-emoji-picker').style.display = 'none';
+      // Broadcast to all contacts so they see the update live
+      const payload = JSON.stringify({ username: myUsername, badge: emoji });
+      contacts.forEach(c => pushToSupabase(c.code, payload, 'badge_update'));
+      renderContacts(document.getElementById('search').value);
+      renderAvatarEl(document.getElementById('my-avatar-preview'), myUsername, myUsername, 52);
+      toast('Badge set to ' + emoji);
+    });
+    grid.appendChild(btn);
+  });
+}
+
+document.getElementById('settings-pick-emoji-btn').addEventListener('click', () => {
+  if (!isPremiumActive()) { openPremiumModal(); return; }
+  const picker = document.getElementById('badge-emoji-picker');
+  buildEmojiPicker();
+  picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('settings-remove-badge').addEventListener('click', () => {
+  myBadgeEmoji = '';
+  ls('myBadgeEmoji', '');
+  const payload = JSON.stringify({ username: myUsername, badge: '' });
+  contacts.forEach(c => pushToSupabase(c.code, payload, 'badge_update'));
+  updateBadgePreviewUI();
+  renderContacts(document.getElementById('search').value);
+  renderAvatarEl(document.getElementById('my-avatar-preview'), myUsername, myUsername, 52);
+  toast('Badge removed');
+});
+
+// Premium: hide read receipts toggle
+document.getElementById('hide-receipts-toggle').addEventListener('change', e => {
+  if (!isPremiumActive()) {
+    e.target.checked = false;
+    openPremiumModal();
+    return;
+  }
+  hideReadReceipts = e.target.checked;
+  ls('hideReadReceipts', hideReadReceipts ? '1' : '0');
+  updateReceiptToggleUI();
+  toast(hideReadReceipts ? 'Read receipts hidden' : 'Read receipts visible');
+});
+
+// Light mode toggle (Max only)
+document.getElementById('light-mode-toggle').addEventListener('change', e => {
+  if (myPremiumTier !== 'max') {
+    e.target.checked = false;
+    openPremiumModal();
+    return;
+  }
+  isLightMode = e.target.checked;
+  ls('isLightMode', isLightMode ? '1' : '0');
+  applyTheme();
+  toast(isLightMode ? '☀️ Light mode on' : '🌙 Dark mode on');
+});
+
+// Accent hex input (Max only)
+document.getElementById('accent-hex-input').addEventListener('change', e => {
+  if (myPremiumTier !== 'max') { openPremiumModal(); return; }
+  const val = e.target.value.replace('#','').trim();
+  if (/^[0-9a-fA-F]{6}$/.test(val)) {
+    applyAccentColor('#' + val);
+    ls('myAccentColor', myAccentColor);
+  }
+});
+document.getElementById('accent-hex-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') e.target.dispatchEvent(new Event('change'));
+});
+
+// Native color picker (Max only)
+document.getElementById('accent-color-native').addEventListener('input', e => {
+  if (myPremiumTier !== 'max') { openPremiumModal(); return; }
+  applyAccentColor(e.target.value);
+  ls('myAccentColor', myAccentColor);
+});
+
+// Build swatches when settings opens
+document.getElementById('settings-btn').addEventListener('click', () => {
+  buildAccentSwatches();
+  applyTheme();
+}, true);
+
+
+
 // Settings — remove story
 document.getElementById('settings-remove-story').addEventListener('click', () => {
   if (!myStories.length) { toast('You have no active story'); return; }
@@ -4317,6 +4711,10 @@ document.getElementById('settings-btn').addEventListener('click', async () => {
   try { document.getElementById('settings-username-val').textContent = '@' + myUsername; } catch(e) {}
   try { updateMyAvatarUI(); } catch(e) {}
   try { updateNotificationToggleUI(); } catch(e) {}
+  try { updateReceiptToggleUI(); } catch(e) {}
+  try { updateBadgePreviewUI(); } catch(e) {}
+  try { buildAccentSwatches(); } catch(e) {}
+  try { applyTheme(); } catch(e) {}
   try {
     const removeStoryBtn = document.getElementById('settings-remove-story');
     if (removeStoryBtn) removeStoryBtn.style.display = myStories.length ? 'block' : 'none';
