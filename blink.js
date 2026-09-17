@@ -15,7 +15,7 @@ let myAvatar         = '';
 let myBadgeEmoji     = '';     // single emoji badge (Pro/Max feature)
 let hideReadReceipts = false;  // Pro/Max: don't send seen confirmations
 let isLightMode      = false;  // Max: light/dark toggle
-let myAccentColor    = '#2563eb'; // Max: custom accent color
+let myAccentColor    = '#ffffff'; // Max: custom accent color
 let avatars          = {};
 let badges           = {}; // username → emoji badge, received from others
 let notificationsOn  = true;
@@ -26,7 +26,7 @@ let activeCode       = null;
 let replyTarget      = null; // the message currently being replied to, if any
 let activeType       = 'dm';
 let stickerData      = [];
-let activeStickerCat = 'favourites';
+let activeStickerCat = 'custom';
 let favStickers      = [];
 let customStickers   = [];
 let stories          = {};
@@ -421,7 +421,7 @@ function showBroadcastBanner(message) {
   banner.id = 'broadcast-banner';
   banner.style.cssText = `
     position: relative; z-index: 50; flex-shrink: 0;
-    background: #2563eb; color: #fff; font-size: 13px; font-weight: 600;
+    background: #ffffff; color: #000; font-size: 13px; font-weight: 600;
     text-align: center; padding: 9px 36px; line-height: 1.4;
   `;
   banner.textContent = message;
@@ -583,7 +583,14 @@ async function startApp() {
   myBadgeEmoji     = ls('myBadgeEmoji') || '';
   hideReadReceipts = ls('hideReadReceipts') === '1';
   isLightMode      = ls('isLightMode') === '1';
-  myAccentColor    = ls('myAccentColor') || '#2563eb';
+  // Force-migrate old blue default to white
+  const storedAccent = ls('myAccentColor');
+  if (!storedAccent || storedAccent === '#2563eb' || storedAccent === '#7c3aed' || storedAccent === '#3b82f6') {
+    ls('myAccentColor', '#ffffff');
+    myAccentColor = '#ffffff';
+  } else {
+    myAccentColor = storedAccent;
+  }
   stories        = JSON.parse(ls('stories')        || '{}');
   myStories      = JSON.parse(ls('myStories')      || 'null');
   if (!myStories) {
@@ -600,10 +607,12 @@ async function startApp() {
   cleanExpiredStories();
   renderContacts();
   fetchPayBalance();
-  updatePremiumUI(); // apply cached tier instantly — no network wait
-  checkPremiumStatus(); // then verify with Supabase in background
+  updatePremiumUI();
+  checkPremiumStatus();
   applyTheme();
   applyAccentColor(myAccentColor);
+  initAnalytics();
+  trackEvent('session_start', { device: myDeviceId || 'unknown' });
   await loadStickers();
   await registerDevice();
   if (SUPABASE_URL && SUPABASE_KEY) {
@@ -1085,6 +1094,7 @@ async function blobToBase64(blob) {
 }
 
 async function sendVoiceMessage() {
+  analyticsOnFeature('voice_message');
   if (!recordedBlob || !activeCode) return;
   const base64 = await blobToBase64(recordedBlob);
   const sizeKB = Math.round((base64.length * 3/4) / 1024);
@@ -1103,6 +1113,132 @@ async function sendVoiceMessage() {
   toast(`Voice sent · ${sizeKB}KB`);
 }
 
+
+// ─── ANALYTICS ────────────────────────────────────────────────────────────────
+
+const ANALYTICS_CONSENT_KEY = 'analyticsConsent';   // 'yes' | 'no'
+const ANALYTICS_CONSENT_DATE = 'analyticsConsentDate';
+const CONSENT_EXPIRY_DAYS = 90;
+
+let analyticsEnabled = false;
+let _openTimers = {}; // tracks open timestamps for duration calculation
+
+function analyticsConsented() {
+  const val = localStorage.getItem(ANALYTICS_CONSENT_KEY);
+  const date = localStorage.getItem(ANALYTICS_CONSENT_DATE);
+  if (!val || !date) return null; // never asked
+  const age = (Date.now() - parseInt(date)) / 86400000;
+  if (age > CONSENT_EXPIRY_DAYS) return null; // expired — re-ask
+  return val === 'yes';
+}
+
+function initAnalytics() {
+  const consent = analyticsConsented();
+  analyticsEnabled = consent === true;
+  updateAnalyticsToggleUI();
+  if (consent === null) {
+    // Never asked or expired — show banner after a short delay
+    // so it doesn't appear before the app has even loaded
+    setTimeout(showConsentBanner, 2000);
+  }
+}
+
+function showConsentBanner() {
+  const banner = document.getElementById('consent-banner');
+  if (!banner) return;
+  banner.style.display = 'block';
+  requestAnimationFrame(() => banner.classList.add('show'));
+}
+
+function hideConsentBanner() {
+  const banner = document.getElementById('consent-banner');
+  if (!banner) return;
+  banner.classList.remove('show');
+  setTimeout(() => { banner.style.display = 'none'; }, 400);
+}
+
+function setAnalyticsConsent(accepted) {
+  localStorage.setItem(ANALYTICS_CONSENT_KEY, accepted ? 'yes' : 'no');
+  localStorage.setItem(ANALYTICS_CONSENT_DATE, Date.now().toString());
+  analyticsEnabled = accepted;
+  hideConsentBanner();
+  updateAnalyticsToggleUI();
+  if (accepted) {
+    trackEvent('session_start', { device: myDeviceId || 'unknown' });
+  }
+}
+
+function updateAnalyticsToggleUI() {
+  const toggle = document.getElementById('analytics-toggle');
+  const hint = document.getElementById('analytics-hint');
+  if (!toggle) return;
+  toggle.checked = analyticsEnabled;
+  if (hint) hint.textContent = analyticsEnabled ? 'Sharing usage data' : 'Not sharing usage data';
+}
+
+// Core fire-and-forget event logger — drops silently if consent not given
+async function trackEvent(event, meta = {}) {
+  if (!analyticsEnabled || !myUsername) return;
+  try {
+    fetch(`${SUPABASE_URL}/rest/v1/analytics_events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({ username: myUsername, event, meta })
+    }); // intentionally not awaited — analytics must never block UI
+  } catch(e) {} // silently swallow errors
+}
+
+// Open/close timer helpers — call trackOpen(key) when something opens,
+// trackClose(key, eventName, extraMeta) when it closes to log duration
+function trackOpen(key, extraMeta = {}) {
+  _openTimers[key] = { ts: Date.now(), meta: extraMeta };
+}
+
+function trackClose(key, event, extraMeta = {}) {
+  const timer = _openTimers[key];
+  if (!timer) return;
+  const duration_seconds = Math.round((Date.now() - timer.ts) / 1000);
+  trackEvent(event, { ...timer.meta, ...extraMeta, duration_seconds });
+  delete _openTimers[key];
+}
+
+// ─── INSTRUMENTATION HOOKS ────────────────────────────────────────────────────
+// Called from existing functions throughout the app — thin wrappers
+
+function analyticsOnChatOpen(contactCode) {
+  trackOpen('chat', { chat_with: contactCode });
+  trackEvent('chat_open', { chat_with: contactCode });
+}
+
+function analyticsOnChatClose(contactCode) {
+  trackClose('chat', 'chat_close', { chat_with: contactCode });
+}
+
+function analyticsOnMenuOpen(menuName) {
+  trackOpen('menu_' + menuName, { menu: menuName });
+}
+
+function analyticsOnMenuClose(menuName) {
+  trackClose('menu_' + menuName, 'menu_close', { menu: menuName });
+}
+
+function analyticsOnFeature(feature) {
+  trackEvent('feature_use', { feature });
+}
+
+function analyticsOnScroll(section) {
+  // Debounced — only fires once per 3s per section to avoid flood
+  const key = 'scroll_' + section;
+  if (_openTimers['_scroll_' + key]) return;
+  _openTimers['_scroll_' + key] = true;
+  trackEvent('scroll', { section });
+  setTimeout(() => delete _openTimers['_scroll_' + key], 3000);
+}
 
 // ─── BLINK PREMIUM ───────────────────────────────────────────────────────────
 
@@ -1146,8 +1282,8 @@ function isPremiumActive() { return !!myPremiumTier; }
 // ─── THEME & ACCENT ───────────────────────────────────────────────────────────
 
 const ACCENT_PRESETS = [
-  '#2563eb', // Blue (default)
-  '#7c3aed', // Purple
+  '#ffffff', // White (default)
+  '#cccccc', // Light grey
   '#db2777', // Pink
   '#dc2626', // Red
   '#ea580c', // Orange
@@ -1292,8 +1428,12 @@ function openPremiumModal() {
   renderPremiumCardStates();
   document.getElementById('premium-modal').classList.add('open');
   document.getElementById('settings-overlay').classList.remove('open');
+  analyticsOnMenuOpen('premium');
 }
-function closePremiumModal() { document.getElementById('premium-modal').classList.remove('open'); }
+function closePremiumModal() {
+  document.getElementById('premium-modal').classList.remove('open');
+  analyticsOnMenuClose('premium');
+}
 
 async function purchasePremium(tier) {
   const price = tier === 'pro' ? 500 : 2000;
@@ -2011,6 +2151,7 @@ async function flipCamera() {
 }
 
 function captureSnapPhoto() {
+  analyticsOnFeature('snap');
   const video = document.getElementById('blink-camera-video');
   const canvas = document.getElementById('blink-camera-canvas');
   const srcW = video.videoWidth, srcH = video.videoHeight;
@@ -2791,6 +2932,7 @@ function updateEditActions() {
 
 // ─── OPEN DM ──────────────────────────────────────────────────────────────────
 function openChat(code) {
+  if (activeCode && activeCode !== code) analyticsOnChatClose(activeCode);
   activeCode = code; activeType = 'dm';
   const contact = contacts.find(c => c.code === code);
   if (!contact) return;
@@ -2810,9 +2952,10 @@ function openChat(code) {
   renderMessages(code, 'dm');
   renderContacts(document.getElementById('search').value);
   showChat();
+  analyticsOnChatOpen(code);
 
   if (contacts.find(c => c.code === code)) {
-    pushToSupabase(code, '__read__', 'read_receipt', { seenHidden: hideReadReceipts });
+    pushToSupabase(code, hideReadReceipts ? '__read_hidden__' : '__read__', 'read_receipt');
   }
 }
 
@@ -3389,7 +3532,7 @@ function addMessageToChat(code, msg) {
   if (!msg.sent && ['text','image','sticker'].includes(msg.type)) {
     if (code === activeCode && activeType === 'dm' && document.hasFocus()) {
       if (contacts.find(c => c.code === code)) {
-        pushToSupabase(code, '__read__', 'read_receipt', { seenHidden: hideReadReceipts });
+        pushToSupabase(code, hideReadReceipts ? '__read_hidden__' : '__read__', 'read_receipt');
       }
     }
   }
@@ -3743,7 +3886,7 @@ async function pollMessages() {
           const lastSent = [...chats[r.from]].reverse().find(m => m.sent);
           if (lastSent) {
             lastSent.seen = true;
-            lastSent.seenHidden = !!r.seenHidden; // true if recipient has receipts hidden
+            lastSent.seenHidden = r.text === '__read_hidden__'; // true if recipient has receipts hidden
           }
           saveChats();
           if (activeCode === r.from) renderMessages(r.from, activeType);
@@ -3928,6 +4071,13 @@ async function pollMessages() {
       if (!r.text) return;
       ensureContact(r.from);
       addMessageToChat(r.from, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration, replyTo: parseReplyTo(r.replyTo), storyReply: parseReplyTo(r.storyReply) });
+
+      // Native Windows notification when running as desktop app and window is not focused
+      if (window.blinkDesktop && document.hidden) {
+        const senderName = contacts.find(c => c.code === r.from)?.name || r.from;
+        const preview = r.type === 'image' ? '📷 Image' : r.type === 'voice' ? '🎤 Voice message' : r.type === 'sticker' ? '🎭 Sticker' : (r.text || '').slice(0, 60);
+        window.blinkDesktop.notify(senderName, preview);
+      }
     });
 
     // With per-device addresses, every row this poll picked up was meant for
@@ -4015,7 +4165,7 @@ async function loadStickers() {
     const res = await fetch('stickers.json');
     const data = await res.json();
     stickerData = data.categories;
-    buildStickerTabs(); renderStickerGrid('favourites');
+    buildStickerTabs(); renderStickerGrid('custom');
   } catch(e) {}
 }
 
@@ -4115,6 +4265,7 @@ function showStickerMenu(bubbleEl, bwrap, url) {
 }
 
 function sendStickerMsg(s) {
+  analyticsOnFeature('sticker');
   if (!activeCode) return;
   const msgId = generateMsgId();
   if (activeType==='group') sendGroupMessage(s.url,'sticker',{msgId});
@@ -4309,6 +4460,16 @@ document.getElementById('settings-sync-btn').addEventListener('click', async () 
 });
 
 // Feedback / bug report
+// Analytics consent banner
+document.getElementById('consent-accept').addEventListener('click', () => setAnalyticsConsent(true));
+document.getElementById('consent-decline').addEventListener('click', () => setAnalyticsConsent(false));
+
+// Analytics toggle in settings
+document.getElementById('analytics-toggle').addEventListener('change', e => {
+  setAnalyticsConsent(e.target.checked);
+  toast(e.target.checked ? 'Usage analytics enabled' : 'Usage analytics disabled');
+});
+
 document.getElementById('settings-feedback-btn').addEventListener('click', () => {
   document.getElementById('settings-overlay').classList.remove('open');
   document.getElementById('feedback-text').value = '';
@@ -4666,23 +4827,7 @@ document.getElementById('remove-account-confirm').addEventListener('click', asyn
   window.location.reload();
 });
 
-// Dots menu toggle
-const dotsBtn = document.getElementById('dots-menu-btn');
-const dotsDropdown = document.getElementById('dots-dropdown');
-dotsBtn.addEventListener('click', e => {
-  e.stopPropagation();
-  const isOpen = dotsDropdown.classList.contains('open');
-  if (isOpen) { dotsDropdown.classList.remove('open'); return; }
-  // Position using fixed coords so it floats above all sidebar stacking contexts
-  const rect = dotsBtn.getBoundingClientRect();
-  dotsDropdown.style.top = (rect.bottom + 6) + 'px';
-  dotsDropdown.style.right = (window.innerWidth - rect.right) + 'px';
-  dotsDropdown.classList.add('open');
-});
-document.addEventListener('click', () => dotsDropdown.classList.remove('open'));
-document.querySelectorAll('.dots-item').forEach(item => {
-  item.addEventListener('click', () => dotsDropdown.classList.remove('open'), true);
-});
+// Dots menu removed — Edit and Settings are now direct header buttons
 
 // Blink Pay — fetch and display balance in sidebar chip
 function formatBP(n) {
@@ -4715,14 +4860,18 @@ document.getElementById('settings-btn').addEventListener('click', async () => {
   try { updateBadgePreviewUI(); } catch(e) {}
   try { buildAccentSwatches(); } catch(e) {}
   try { applyTheme(); } catch(e) {}
+  try { updateAnalyticsToggleUI(); } catch(e) {}
   try {
     const removeStoryBtn = document.getElementById('settings-remove-story');
     if (removeStoryBtn) removeStoryBtn.style.display = myStories.length ? 'block' : 'none';
   } catch(e) {}
   document.getElementById('settings-overlay').classList.add('open');
-  renderManageDevicesSection();
+  analyticsOnMenuOpen('settings');
 });
-document.getElementById('settings-close').addEventListener('click', () => document.getElementById('settings-overlay').classList.remove('open'));
+document.getElementById('settings-close').addEventListener('click', () => {
+  document.getElementById('settings-overlay').classList.remove('open');
+  analyticsOnMenuClose('settings');
+});
 document.getElementById('settings-overlay').addEventListener('click', e => { if(e.target===document.getElementById('settings-overlay')) document.getElementById('settings-overlay').classList.remove('open'); });
 
 async function renderManageDevicesSection() {
@@ -4851,11 +5000,22 @@ document.getElementById('rename-input').addEventListener('keydown', e=>{if(e.key
 document.getElementById('delete-cancel').addEventListener('click', ()=>document.getElementById('delete-modal').classList.remove('open'));
 document.getElementById('delete-modal').addEventListener('click', e=>{if(e.target===document.getElementById('delete-modal'))document.getElementById('delete-modal').classList.remove('open');});
 
-// New contact
-document.getElementById('new-contact-btn').addEventListener('click', () => {
+// New contact button — shows mini menu with New Contact / New Group
+const newContactMenu = document.getElementById('new-contact-menu');
+document.getElementById('new-contact-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  newContactMenu.classList.toggle('open');
+});
+document.getElementById('new-contact-menu-contact').addEventListener('click', () => {
+  newContactMenu.classList.remove('open');
   document.getElementById('contact-name-input').value=''; document.getElementById('contact-code-input').value='';
   document.getElementById('modal').classList.add('open'); document.getElementById('contact-name-input').focus();
 });
+document.getElementById('new-contact-menu-group').addEventListener('click', () => {
+  newContactMenu.classList.remove('open');
+  document.getElementById('new-group-btn').click();
+});
+document.addEventListener('click', () => newContactMenu.classList.remove('open'));
 document.getElementById('modal-cancel').addEventListener('click', ()=>document.getElementById('modal').classList.remove('open'));
 document.getElementById('modal').addEventListener('click', e=>{if(e.target===document.getElementById('modal'))document.getElementById('modal').classList.remove('open');});
 document.getElementById('modal-add').addEventListener('click', () => {
@@ -4871,21 +5031,40 @@ document.getElementById('modal-add').addEventListener('click', () => {
 });
 
 // New group
+function buildGroupMemberList(filter='') {
+  const list = document.getElementById('group-member-list');
+  list.innerHTML = '';
+  const q = filter.toLowerCase();
+  const filtered = contacts.filter(c => !q || c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q));
+  if (!filtered.length) {
+    list.innerHTML = `<div style="color:#8e8e93;font-size:13px;padding:12px 0">${contacts.length ? 'No contacts match' : 'Add contacts first'}</div>`;
+    return;
+  }
+  filtered.forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'member-checkbox-row';
+    row.dataset.code = c.code;
+    row.innerHTML = `<div class="avatar ${avatarColor(c.code)}" style="width:36px;height:36px;font-size:14px;flex-shrink:0">${avatarLetter(c.name)}</div><span>${escHtml(c.name)}</span>`;
+    row.addEventListener('click', () => {
+      row.classList.toggle('selected');
+    });
+    list.appendChild(row);
+  });
+}
 document.getElementById('new-group-btn').addEventListener('click', () => {
-  const list=document.getElementById('group-member-list');
-  list.innerHTML='';
-  if(!contacts.length){list.innerHTML='<div style="color:#8e8e93;font-size:13px;padding:8px 0">Add contacts first</div>';}
-  else{contacts.forEach(c=>{const row=document.createElement('label');row.className='member-checkbox-row';row.innerHTML=`<input type="checkbox" value="${c.code}"><div class="avatar ${avatarColor(c.code)}" style="width:32px;height:32px;font-size:13px">${avatarLetter(c.name)}</div><span>${escHtml(c.name)}</span>`;list.appendChild(row);});}
-  document.getElementById('group-name-input').value='';
+  document.getElementById('group-name-input').value = '';
+  document.getElementById('group-member-search').value = '';
+  buildGroupMemberList();
   document.getElementById('group-modal').classList.add('open');
   document.getElementById('group-name-input').focus();
 });
+document.getElementById('group-member-search').addEventListener('input', e => buildGroupMemberList(e.target.value));
 document.getElementById('group-modal-cancel').addEventListener('click', ()=>document.getElementById('group-modal').classList.remove('open'));
 document.getElementById('group-modal').addEventListener('click', e=>{if(e.target===document.getElementById('group-modal'))document.getElementById('group-modal').classList.remove('open');});
 document.getElementById('group-modal-create').addEventListener('click', async () => {
   const name=document.getElementById('group-name-input').value.trim();
   if(!name){toast('Enter a group name');return;}
-  const checked=[...document.querySelectorAll('#group-member-list input:checked')].map(i=>i.value);
+  const checked=[...document.querySelectorAll('#group-member-list .member-checkbox-row.selected')].map(r=>r.dataset.code);
   if(!checked.length){toast('Select at least one member');return;}
   document.getElementById('group-modal').classList.remove('open');
   await createGroup(name,checked);
