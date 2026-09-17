@@ -12,9 +12,7 @@
 <div id="welcome-screen" style="display:none">
   <div id="welcome-box">
     <div id="welcome-icon">
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-      </svg>
+      <span style="font-size:32px;font-weight:900;color:#000;font-family:-apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:-1px;line-height:1;">B</span>
     </div>
     <h1>Welcome to Blink</h1>
     <p>Choose a username. This is your address — share it so people can message you.</p>
@@ -67,9 +65,7 @@
 <div id="splash">
   <div id="splash-logo">
     <div id="splash-icon">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-      </svg>
+      <span style="font-size:30px;font-weight:900;color:#000;font-family:-apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:-1px;line-height:1;">B</span>
     </div>
     <span id="splash-wordmark">Blink</span>
   </div>
@@ -89,30 +85,15 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
           <span id="pay-balance-label">BP —</span>
         </a>
-        <!-- Triple-dot menu -->
-        <div id="dots-menu-wrap">
-          <button id="dots-menu-btn" title="More">
-            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
-          </button>
-          <div id="dots-dropdown">
-            <button class="dots-item" id="settings-btn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-              Settings
-            </button>
-            <button class="dots-item" id="edit-btn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-              Edit
-            </button>
-            <button class="dots-item" id="new-group-btn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-              New Group
-            </button>
-            <button class="dots-item" id="new-contact-btn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></svg>
-              Add Contact
-            </button>
-          </div>
-        </div>
+        <!-- Edit + Settings buttons -->
+        <button id="edit-btn" title="Edit" class="header-icon-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button id="settings-btn" title="Settings" class="header-icon-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <!-- Hidden new-group-btn kept for JS compatibility -->
+        <button id="new-group-btn" style="display:none;"></button>
       </div>
     </div>
 
@@ -166,14 +147,31 @@
 
     <div id="contacts-list"></div>
 
-    <!-- STUDY BUTTON -->
-    <a href="study.html" id="study-btn">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
-        <path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/>
-      </svg>
-      <span>Study</span>
-    </a>
+    <!-- STUDY BUTTON WRAP -->
+    <div id="study-btn-wrap">
+      <a href="study.html" id="study-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+          <path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/>
+        </svg>
+        <span>Study</span>
+      </a>
+      <div id="new-contact-wrap">
+        <button id="new-contact-btn" title="Add Contact">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></svg>
+        </button>
+        <div id="new-contact-menu">
+          <button id="new-contact-menu-contact">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></svg>
+            New Contact
+          </button>
+          <button id="new-contact-menu-group">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            New Group
+          </button>
+        </div>
+      </div>
+    </div>
 
   </div><!-- /sidebar -->
 
@@ -270,6 +268,16 @@
 
     <button class="settings-action-btn premium-settings-btn" id="settings-premium-btn" style="margin-top:8px;">⚡ Blink Premium</button>
     <button class="settings-action-btn" id="settings-sync-btn" style="margin-top:8px;">🔄 Sync Devices</button>
+    <div class="settings-row" id="settings-row-analytics">
+      <div>
+        <div class="settings-label">Usage Analytics</div>
+        <div style="font-size:11px;color:#8e8e93;margin-top:2px;" id="analytics-hint">Helps improve Blink</div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="analytics-toggle">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
     <button class="settings-action-btn" id="settings-feedback-btn" style="margin-top:8px;">🐛 Report a Bug / Feedback</button>
     <div id="manage-devices-section" style="display:none;">
       <div class="settings-label" style="margin-top:12px;">Linked Devices</div>
@@ -482,7 +490,11 @@
   <div class="modal">
     <h2>New Group</h2>
     <div><label>Group name</label><input type="text" id="group-name-input" placeholder="e.g. Family"></div>
-    <div><label>Add members</label><div id="group-member-list" style="display:flex;flex-direction:column;gap:8px;max-height:180px;overflow-y:auto;margin-top:4px"></div></div>
+    <div style="margin-top:12px;">
+      <label>Members</label>
+      <input type="text" id="group-member-search" placeholder="Search contacts…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style="margin-top:6px;">
+      <div id="group-member-list"></div>
+    </div>
     <div class="modal-actions">
       <button class="btn-cancel" id="group-modal-cancel">Cancel</button>
       <button class="btn-add"    id="group-modal-create">Create</button>
@@ -777,6 +789,21 @@
 </div>
 
 <div id="toast"></div>
+
+<!-- ANALYTICS CONSENT BANNER -->
+<div id="consent-banner">
+  <div id="consent-inner">
+    <div id="consent-icon">🍪</div>
+    <div id="consent-text">
+      <strong>Usage data</strong>
+      <span>Blink collects anonymised usage data (time in chats, features used) to improve the app. Your username is stored with this data. You can withdraw consent anytime in Settings.</span>
+    </div>
+    <div id="consent-btns">
+      <button id="consent-decline">Decline</button>
+      <button id="consent-accept">Accept</button>
+    </div>
+  </div>
+</div>
 <script src="blink.js"></script>
 </body>
 </html>
