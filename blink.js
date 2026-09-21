@@ -620,6 +620,10 @@ async function startApp() {
     setInterval(checkinDevice, DEVICE_CHECKIN_INTERVAL);
     checkinDevice();
     maybeAutoSync();
+    fetchMyTimetable();
+    fetchContactTimetables();
+    // refresh once per hour
+    setInterval(fetchContactTimetables, 60 * 60 * 1000);
   }
   const lastChat = ls('lastChat');
   const lastType = ls('lastType') || 'dm';
@@ -1353,7 +1357,9 @@ function updatePremiumUI() {
   const isPro = isPremiumActive();
 
   if (!isPro) {
-    if (!sessionStorage.getItem('premiumBannerDismissed')) banner.style.display = 'flex';
+    const ttBanner = document.getElementById('timetable-banner');
+    const ttBannerVisible = ttBanner && ttBanner.style.display !== 'none';
+    if (!sessionStorage.getItem('premiumBannerDismissed') && !ttBannerVisible) banner.style.display = 'flex';
     document.getElementById('settings-row-receipts')?.classList.add('premium-locked');
     document.getElementById('settings-row-badge')?.classList.add('premium-locked');
     document.getElementById('settings-row-theme')?.classList.add('premium-locked');
@@ -2852,6 +2858,26 @@ function renderContacts(filter = '') {
   renderStoriesBar();
   const list = document.getElementById('contacts-list');
   list.innerHTML = '';
+
+  // ── Pinned Blink AI entry ──
+  if (!filter || 'blink ai'.includes(filter.toLowerCase())) {
+    const aiMsgs = chats['blinkai'] || [];
+    const aiLast = aiMsgs[aiMsgs.length - 1];
+    const aiPreview = aiLast ? (aiLast.sent ? 'You: ' + aiLast.text : aiLast.text) : 'Ask me anything';
+    const isAiActive = activeCode === 'blinkai';
+    const aiDiv = document.createElement('div');
+    aiDiv.className = 'contact-item blinkai-item' + (isAiActive ? ' active' : '');
+    aiDiv.innerHTML = `
+      <div class="avatar blinkai-avatar"><img src="blinkai.png" style="width:44px;height:44px;border-radius:50%;object-fit:cover;display:block;"></div>
+      <div class="contact-info">
+        <div class="contact-name">Blink AI</div>
+        <div class="contact-preview">${escHtml(aiPreview)}</div>
+      </div>
+      <div class="contact-meta">${aiLast ? `<div class="contact-time">${formatTime(aiLast.time)}</div>` : ''}</div>
+    `;
+    aiDiv.addEventListener('click', () => openBlinkAIChat());
+    list.appendChild(aiDiv);
+  }
   const items = [];
   contacts.filter(c => c.name.toLowerCase().includes(filter.toLowerCase())).forEach(c => {
     const msgs = chats[c.code] || [];
@@ -2899,7 +2925,13 @@ function renderContacts(filter = '') {
       div.innerHTML = `<div class="select-circle ${isSelected?'checked':''}"></div>${avatarHtml}<div class="contact-info"><div class="contact-name">${escHtml(data.name)}</div><div class="contact-preview">${escHtml(preview)}</div></div>`;
       div.addEventListener('click', () => toggleSelectContact(id));
     } else {
-      div.innerHTML = `${avatarHtml}<div class="contact-info"><div class="contact-name">${escHtml(data.name)}</div><div class="contact-preview">${escHtml(preview)}</div></div><div class="contact-meta">${last?`<div class="contact-time">${formatTime(last.time)}</div>`:''}${streakHtml} ${unread>0?`<div class="unread-badge">${unread}</div>`:''}</div>`;
+      const lessonInfo = type === 'dm' ? getCurrentLesson(data.code) : null;
+      const lessonHtml = lessonInfo
+        ? lessonInfo.status === 'lesson'
+          ? `<span class="contact-lesson"> · ${escHtml(lessonInfo.subject)}${lessonInfo.room ? ' ' + escHtml(lessonInfo.room) : ''}</span>`
+          : `<span class="contact-lesson contact-lesson-break">Break</span>`
+        : '';
+      div.innerHTML = `${avatarHtml}<div class="contact-info"><div class="contact-name">${escHtml(data.name)}${lessonHtml}</div><div class="contact-preview">${escHtml(preview)}</div></div><div class="contact-meta">${last?`<div class="contact-time">${formatTime(last.time)}</div>`:''}${streakHtml} ${unread>0?`<div class="unread-badge">${unread}</div>`:''}</div>`;
       div.addEventListener('click', () => type === 'group' ? openGroup(data.id) : openChat(data.code));
     }
     list.appendChild(div);
@@ -3563,6 +3595,14 @@ async function sendMessage() {
   const type = isImageUrl(text) ? 'image' : 'text';
   const msgId = generateMsgId();
   const replyTo = buildReplyToPayload();
+
+  if (activeCode === 'blinkai') {
+    await sendBlinkAIMessage(text);
+    input.value = ''; input.style.height = 'auto';
+    document.getElementById('send-btn').disabled = true;
+    clearReplyTarget();
+    return;
+  }
 
   if (activeType === 'group') {
     await sendGroupMessage(text, type, { msgId, replyTo });
@@ -4452,6 +4492,317 @@ document.getElementById('premium-banner-close').addEventListener('click', () => 
   document.getElementById('premium-banner').style.display = 'none';
   sessionStorage.setItem('premiumBannerDismissed', '1');
 });
+
+// ─── BLINK AI ─────────────────────────────────────────────────────────────────
+const BLINKAI_SYSTEM = `You are Blink AI, a helpful assistant built into Blink — a private messaging app for students. You help with homework, explaining concepts, answering questions, and anything students need. Be concise, friendly, and smart. Never reveal your underlying model.`;
+
+function openBlinkAIChat() {
+  if (activeCode && activeCode !== 'blinkai') analyticsOnChatClose(activeCode);
+  activeCode = 'blinkai'; activeType = 'dm';
+  if (chats['blinkai']) { chats['blinkai'].forEach(m => { if (!m.sent) m.read = true; }); saveChats(); }
+  const av = document.getElementById('chat-avatar');
+  av.className = 'avatar blinkai-avatar';
+  av.innerHTML = `<img src="blinkai.png" style="width:44px;height:44px;border-radius:50%;object-fit:cover;display:block;">`;
+  document.getElementById('chat-header-name').textContent = 'Blink AI';
+  document.getElementById('chat-header-code').textContent = 'Your AI assistant';
+  document.getElementById('chat-header-sub').style.display = 'none';
+  document.getElementById('empty-state').style.display = 'none';
+  const cm = document.getElementById('chat-main');
+  cm.style.display = 'flex'; cm.style.flex = '1';
+  cm.style.flexDirection = 'column'; cm.style.overflow = 'hidden';
+  ls('lastChat', 'blinkai'); ls('lastType', 'dm');
+  renderMessages('blinkai', 'dm');
+  renderContacts(document.getElementById('search').value);
+  showChat();
+}
+
+async function sendBlinkAIMessage(text) {
+  const msgId = generateMsgId();
+  addMessageToChat('blinkai', { msgId, text, time: Date.now(), sent: true, read: true, type: 'text' });
+  renderMessages('blinkai', 'dm');
+
+  // Typing indicator
+  const typingId = 'typing_' + Date.now();
+  addMessageToChat('blinkai', { msgId: typingId, text: '...', time: Date.now(), sent: false, read: true, type: 'text', isTyping: true });
+  renderMessages('blinkai', 'dm');
+
+  try {
+    // Build message history for context (last 20 messages)
+    const history = (chats['blinkai'] || [])
+      .filter(m => !m.isTyping)
+      .slice(-20)
+      .map(m => ({ role: m.sent ? 'user' : 'assistant', content: m.text }));
+
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/blinkai`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_KEY}`
+      },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: BLINKAI_SYSTEM },
+          ...history
+        ]
+      })
+    });
+
+    // Remove typing indicator
+    if (chats['blinkai']) {
+      chats['blinkai'] = chats['blinkai'].filter(m => m.msgId !== typingId);
+      saveChats();
+    }
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('[blinkai] error', res.status, err);
+      addMessageToChat('blinkai', { msgId: generateMsgId(), text: 'Something went wrong. Try again.', time: Date.now(), sent: false, read: true, type: 'text' });
+    } else {
+      const data = await res.json();
+      const reply = data.choices?.[0]?.message?.content || 'No response.';
+      addMessageToChat('blinkai', { msgId: generateMsgId(), text: reply, time: Date.now(), sent: false, read: true, type: 'text' });
+    }
+  } catch(e) {
+    if (chats['blinkai']) {
+      chats['blinkai'] = chats['blinkai'].filter(m => m.msgId !== typingId);
+      saveChats();
+    }
+    addMessageToChat('blinkai', { msgId: generateMsgId(), text: 'Could not reach Blink AI. Check your connection.', time: Date.now(), sent: false, read: true, type: 'text' });
+  }
+
+  renderMessages('blinkai', 'dm');
+  renderContacts(document.getElementById('search').value);
+}
+
+// ─── TIMETABLE ────────────────────────────────────────────────────────────────
+let myTimetable = {}; // { Mon: [{start,end,subject,room}, ...], ... }
+let ttEditIndex = null; // {day, index} when editing existing
+let contactTimetables = {}; // { username: schedule }
+
+const TT_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function loadTimetable() {
+  try { myTimetable = JSON.parse(localStorage.getItem('myTimetable') || '{}'); } catch { myTimetable = {}; }
+}
+
+async function saveTimetable() {
+  localStorage.setItem('myTimetable', JSON.stringify(myTimetable));
+  hideTimetableBanner();
+  if (!myUsername) return;
+  try {
+    console.log('[tt] saving for', myUsername, 'schedule:', JSON.stringify(myTimetable));
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/timetables`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'resolution=merge-duplicates,return=minimal'
+      },
+      body: JSON.stringify({ username: myUsername, schedule: myTimetable, updated_at: new Date().toISOString() })
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error('[tt] save failed', res.status, txt);
+    } else {
+      console.log('[tt] saved for', myUsername);
+    }
+  } catch(e) { console.warn('[tt] Timetable sync failed', e); }
+}
+
+async function fetchMyTimetable() {
+  if (!myUsername) return;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/timetables?username=eq.${encodeURIComponent(myUsername)}&select=schedule`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (rows.length && rows[0].schedule) {
+      myTimetable = rows[0].schedule;
+      localStorage.setItem('myTimetable', JSON.stringify(myTimetable));
+    }
+  } catch(e) { console.warn('fetchMyTimetable failed', e); }
+}
+
+async function fetchContactTimetables() {
+  if (!contacts.length) return;
+  const usernames = contacts.map(c => c.code);
+  const inList = usernames.join(',');
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/timetables?username=in.(${inList})&select=username,schedule`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) { console.warn('fetchContactTimetables HTTP', res.status); return; }
+    const rows = await res.json();
+    console.log('[timetable] fetched', rows.length, 'schedules for', usernames);
+    rows.forEach(r => { contactTimetables[r.username] = r.schedule; });
+    renderContacts();
+  } catch(e) { console.warn('fetchContactTimetables failed', e); }
+}
+
+// Returns current lesson for a username, or null
+function getCurrentLesson(username) {
+  const schedule = username === myUsername ? myTimetable : contactTimetables[username];
+  if (!schedule) return null;
+  const now = new Date();
+  const dayName = TT_DAYS[now.getDay()];
+  const lessons = schedule[dayName];
+  if (!lessons || !lessons.length) return null;
+  const hhmm = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
+  // Find lesson where start <= now < end
+  const active = lessons.find(l => l.start <= hhmm && hhmm < l.end);
+  if (active) return { ...active, status: 'lesson' };
+  // Check if currently on a break (between two lessons)
+  const sorted = [...lessons].sort((a,b) => a.start.localeCompare(b.start));
+  for (let i = 0; i < sorted.length - 1; i++) {
+    if (hhmm >= sorted[i].end && hhmm < sorted[i+1].start) {
+      return { status: 'break', next: sorted[i+1] };
+    }
+  }
+  return null;
+}
+
+function hideTimetableBanner() {
+  const b = document.getElementById('timetable-banner');
+  if (b) b.style.display = 'none';
+}
+
+function showTimetableBannerIfNeeded() {
+  const b = document.getElementById('timetable-banner');
+  if (!b) return;
+  const hasAny = Object.values(myTimetable).some(arr => arr && arr.length > 0);
+  if (!hasAny && !sessionStorage.getItem('timetableBannerDismissed')) {
+    b.style.display = 'flex';
+    // hide premium banner while timetable banner is showing
+    const pb = document.getElementById('premium-banner');
+    if (pb) pb.style.display = 'none';
+  }
+}
+
+function renderTimetableGrid() {
+  const days = ['Mon','Tue','Wed','Thu','Fri'];
+  days.forEach(day => {
+    const container = document.getElementById(`tt-lessons-${day}`);
+    if (!container) return;
+    container.innerHTML = '';
+    const lessons = (myTimetable[day] || []).sort((a,b) => a.start.localeCompare(b.start));
+    lessons.forEach((lesson, idx) => {
+      const chip = document.createElement('div');
+      chip.className = 'tt-lesson-chip';
+      chip.innerHTML = `
+        <span class="tt-chip-subject">${lesson.subject}</span>
+        <span class="tt-chip-time">${lesson.start}–${lesson.end}</span>
+        <span class="tt-chip-room" style="color:var(--text-secondary);font-size:9px;">${lesson.room ? lesson.room : ''}</span>
+        <button class="tt-chip-delete" data-day="${day}" data-idx="${idx}">✕</button>
+      `;
+      chip.addEventListener('click', (e) => {
+        if (e.target.classList.contains('tt-chip-delete')) return;
+        openLessonForm(day, idx);
+      });
+      chip.querySelector('.tt-chip-delete').addEventListener('click', (e) => {
+        e.stopPropagation();
+        myTimetable[day].splice(idx, 1);
+        renderTimetableGrid();
+      });
+      container.appendChild(chip);
+    });
+  });
+}
+
+function openLessonForm(prefillDay, editIdx) {
+  const form = document.getElementById('tt-lesson-form');
+  form.style.display = 'block';
+  document.getElementById('tt-add-lesson-btn').style.display = 'none';
+  if (prefillDay !== undefined && editIdx !== undefined) {
+    const lesson = myTimetable[prefillDay][editIdx];
+    ttEditIndex = {day: prefillDay, index: editIdx};
+    document.getElementById('tt-form-day').value = prefillDay;
+    document.getElementById('tt-form-start').value = lesson.start;
+    document.getElementById('tt-form-end').value = lesson.end;
+    document.getElementById('tt-form-subject').value = lesson.subject;
+    document.getElementById('tt-form-room').value = lesson.room || '';
+  } else {
+    ttEditIndex = null;
+    document.getElementById('tt-form-day').value = 'Mon';
+    document.getElementById('tt-form-start').value = '';
+    document.getElementById('tt-form-end').value = '';
+    document.getElementById('tt-form-subject').value = '';
+    document.getElementById('tt-form-room').value = '';
+  }
+}
+
+function closeLessonForm() {
+  document.getElementById('tt-lesson-form').style.display = 'none';
+  document.getElementById('tt-add-lesson-btn').style.display = 'flex';
+  ttEditIndex = null;
+}
+
+function openTimetableModal() {
+  loadTimetable();
+  renderTimetableGrid();
+  closeLessonForm();
+  document.getElementById('timetable-overlay').classList.add('open');
+}
+
+document.getElementById('timetable-close').addEventListener('click', () => {
+  document.getElementById('timetable-overlay').classList.remove('open');
+});
+document.getElementById('timetable-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('timetable-overlay')) {
+    document.getElementById('timetable-overlay').classList.remove('open');
+  }
+});
+
+document.getElementById('tt-add-lesson-btn').addEventListener('click', () => openLessonForm());
+
+document.getElementById('tt-form-cancel').addEventListener('click', closeLessonForm);
+
+document.getElementById('tt-form-save').addEventListener('click', () => {
+  const day = document.getElementById('tt-form-day').value;
+  const start = document.getElementById('tt-form-start').value;
+  const end = document.getElementById('tt-form-end').value;
+  const subject = document.getElementById('tt-form-subject').value.trim();
+  const room = document.getElementById('tt-form-room').value.trim();
+  if (!start || !end || !subject) { toast('Fill in day, times and subject'); return; }
+  if (!myTimetable[day]) myTimetable[day] = [];
+  if (ttEditIndex !== null) {
+    // remove old entry (may be different day)
+    myTimetable[ttEditIndex.day].splice(ttEditIndex.index, 1);
+  }
+  myTimetable[day].push({ start, end, subject, room });
+  renderTimetableGrid();
+  closeLessonForm();
+});
+
+document.getElementById('tt-save-all-btn').addEventListener('click', () => {
+  saveTimetable();
+  document.getElementById('timetable-overlay').classList.remove('open');
+  toast('Timetable saved');
+});
+
+document.getElementById('timetable-banner-btn').addEventListener('click', () => {
+  hideTimetableBanner();
+  openTimetableModal();
+});
+
+document.getElementById('timetable-banner-close').addEventListener('click', () => {
+  document.getElementById('timetable-banner').style.display = 'none';
+  sessionStorage.setItem('timetableBannerDismissed', '1');
+  // show premium banner if it was suppressed
+  updatePremiumUI();
+});
+
+document.getElementById('settings-timetable-btn').addEventListener('click', () => {
+  document.getElementById('settings-overlay').classList.remove('open');
+  openTimetableModal();
+});
+
+// init timetable on load
+loadTimetable();
+showTimetableBannerIfNeeded();
 
 document.getElementById('settings-sync-btn').addEventListener('click', async () => {
   document.getElementById('settings-overlay').classList.remove('open');
