@@ -1,230 +1,432 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <script>
         window.dataLayer = window.dataLayer || [];
         function gtag() { dataLayer.push(arguments); }
-
         if (localStorage.getItem('cookieConsent') === 'granted') {
-            gtag('consent', 'default', {
-                'analytics_storage': 'granted',
-                'ad_storage': 'granted',
-                'ad_user_data': 'granted',
-                'ad_personalization': 'granted'
-            });
+            gtag('consent', 'default', { 'analytics_storage': 'granted', 'ad_storage': 'granted', 'ad_user_data': 'granted', 'ad_personalization': 'granted' });
         } else {
-            gtag('consent', 'default', {
-                'analytics_storage': 'denied',
-                'ad_storage': 'denied',
-                'ad_user_data': 'denied',
-                'ad_personalization': 'denied'
-            });
+            gtag('consent', 'default', { 'analytics_storage': 'denied', 'ad_storage': 'denied', 'ad_user_data': 'denied', 'ad_personalization': 'denied' });
         }
     </script>
-
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-JH6J9DNLD3"></script>
-    <script>
-        gtag('js', new Date());
-        gtag('config', 'G-JH6J9DNLD3');
-    </script>
+    <script>gtag('js', new Date()); gtag('config', 'G-JH6J9DNLD3');</script>
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Blink - Fast, Free, No-Login Chat</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Blink — Private Messaging</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #0B0F17;
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #000000;
+            --surface: #0f0f0f;
+            --surface2: #1a1a1a;
+            --border: rgba(255,255,255,0.08);
+            --border-hover: rgba(255,255,255,0.16);
+            --text: #ffffff;
+            --text-secondary: #8e8e93;
+            --accent: #ffffff;
         }
-        .glow {
-            position: absolute;
-            width: 500px;
-            height: 500px;
-            background: radial-gradient(circle, rgba(59, 130, 246, 0.08) 0%, rgba(0, 0, 0, 0) 70%);
-            top: -10%;
-            right: -10%;
-            z-index: 0;
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* HEADER */
+        header {
+            position: sticky; top: 0; z-index: 100;
+            background: rgba(0,0,0,0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+        }
+        .header-inner {
+            max-width: 1100px; margin: 0 auto;
+            padding: 0 24px; height: 60px;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .wordmark {
+            font-size: 22px; font-weight: 900;
+            letter-spacing: -1px; color: #fff;
+        }
+        nav { display: flex; align-items: center; gap: 32px; }
+        nav a {
+            font-size: 14px; font-weight: 500;
+            color: var(--text-secondary); text-decoration: none;
+            transition: color 0.15s;
+        }
+        nav a:hover { color: #fff; }
+        .btn-open {
+            background: #fff; color: #000;
+            font-size: 14px; font-weight: 700;
+            padding: 8px 18px; border-radius: 999px;
+            text-decoration: none; transition: opacity 0.15s;
+            letter-spacing: -0.2px;
+        }
+        .btn-open:hover { opacity: 0.85; }
+
+        /* HERO */
+        .hero {
+            max-width: 1100px; margin: 0 auto;
+            padding: 100px 24px 80px;
+            display: grid; grid-template-columns: 1fr 1fr;
+            gap: 64px; align-items: center;
+        }
+        .hero-badge {
+            display: inline-flex; align-items: center; gap: 6px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--border);
+            padding: 5px 12px; border-radius: 999px;
+            font-size: 12px; font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+        .hero-badge svg { width: 12px; height: 12px; }
+        h1 {
+            font-size: clamp(42px, 5vw, 64px);
+            font-weight: 900; line-height: 1.02;
+            letter-spacing: -2.5px; color: #fff;
+            margin-bottom: 20px;
+        }
+        h1 em { font-style: normal; color: var(--text-secondary); }
+        .hero-sub {
+            font-size: 17px; line-height: 1.6;
+            color: var(--text-secondary); font-weight: 400;
+            max-width: 420px; margin-bottom: 40px;
+        }
+        .hero-cta {
+            display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+        }
+        .btn-primary {
+            background: #fff; color: #000;
+            font-size: 15px; font-weight: 700;
+            padding: 13px 28px; border-radius: 999px;
+            text-decoration: none; transition: opacity 0.15s;
+            letter-spacing: -0.3px; display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-primary:hover { opacity: 0.88; }
+        .btn-secondary {
+            font-size: 14px; font-weight: 500;
+            color: var(--text-secondary); text-decoration: none;
+            transition: color 0.15s;
+        }
+        .btn-secondary:hover { color: #fff; }
+
+        /* MOCKUP */
+        .hero-visual {
+            position: relative;
+        }
+        .mockup-shell {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 32px 80px rgba(0,0,0,0.6);
+        }
+        .mockup-bar {
+            display: flex; align-items: center; gap: 6px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
+        .dot-r { background: rgba(255,95,87,0.5); }
+        .dot-y { background: rgba(255,189,68,0.5); }
+        .dot-g { background: rgba(39,201,63,0.5); }
+        .mockup-bar span {
+            font-size: 11px; color: var(--text-secondary);
+            font-family: monospace; margin-left: 8px;
+        }
+        .mockup-screen {
+            display: flex; min-height: 340px;
+        }
+        /* fake sidebar */
+        .mock-sidebar {
+            width: 200px; border-right: 1px solid var(--border);
+            padding: 16px 12px; flex-shrink: 0;
+        }
+        .mock-header {
+            font-size: 18px; font-weight: 900; letter-spacing: -0.5px;
+            margin-bottom: 16px; padding: 0 4px;
+        }
+        .mock-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 8px 8px; border-radius: 10px;
+            margin-bottom: 2px;
+        }
+        .mock-row.active { background: rgba(255,255,255,0.07); }
+        .mock-av {
+            width: 34px; height: 34px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px; font-weight: 700; color: #fff; flex-shrink: 0;
+        }
+        .mock-info { min-width: 0; }
+        .mock-name { font-size: 12px; font-weight: 600; }
+        .mock-preview { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* fake chat */
+        .mock-chat {
+            flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 8px; justify-content: flex-end;
+        }
+        .mock-bubble {
+            max-width: 65%; padding: 8px 12px;
+            border-radius: 16px; font-size: 12px; line-height: 1.4;
+        }
+        .mock-bubble.in {
+            background: var(--surface2); color: #fff; align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+        .mock-bubble.out {
+            background: #1a1a1a; color: #fff;
+            border: 1px solid rgba(255,255,255,0.15);
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+        .mock-time { font-size: 9px; color: var(--text-secondary); margin-top: 2px; text-align: right; }
+
+        /* FEATURES */
+        .features {
+            max-width: 1100px; margin: 0 auto;
+            padding: 80px 24px;
+            border-top: 1px solid var(--border);
+        }
+        .section-label {
+            font-size: 12px; font-weight: 700; letter-spacing: 1.5px;
+            color: var(--text-secondary); text-transform: uppercase;
+            margin-bottom: 16px;
+        }
+        .section-title {
+            font-size: clamp(28px, 3vw, 40px); font-weight: 900;
+            letter-spacing: -1.5px; margin-bottom: 48px;
+        }
+        .features-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+        }
+        .feat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px; padding: 28px;
+            transition: border-color 0.2s;
+        }
+        .feat-card:hover { border-color: var(--border-hover); }
+        .feat-icon {
+            width: 40px; height: 40px; border-radius: 10px;
+            background: rgba(255,255,255,0.06);
+            display: flex; align-items: center; justify-content: center;
+            margin-bottom: 16px;
+        }
+        .feat-icon svg { width: 18px; height: 18px; stroke: #fff; }
+        .feat-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.3px; }
+        .feat-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+
+        /* FOOTER */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 32px 24px;
+            text-align: center;
+            font-size: 13px; color: var(--text-secondary);
+        }
+        footer a { color: var(--text-secondary); text-decoration: none; transition: color 0.15s; }
+        footer a:hover { color: #fff; }
+
+        /* COOKIE BANNER */
+        #cookie-banner {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            width: calc(100% - 40px); max-width: 560px;
+            background: #1a1a1a; border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px; padding: 20px 24px;
+            display: flex; align-items: center; justify-content: space-between; gap: 16px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+            z-index: 9999; font-size: 13px; color: var(--text-secondary);
+        }
+        .cookie-btns { display: flex; gap: 10px; flex-shrink: 0; }
+        .cookie-btn {
+            padding: 8px 16px; border-radius: 999px; border: none;
+            font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+        }
+        .cookie-reject { background: rgba(255,255,255,0.08); color: #fff; }
+        .cookie-accept { background: #fff; color: #000; }
+
+        /* RESPONSIVE */
+        @media (max-width: 768px) {
+            .hero { grid-template-columns: 1fr; gap: 40px; padding: 60px 20px 48px; }
+            .hero-sub { max-width: 100%; }
+            .features-grid { grid-template-columns: 1fr; }
+            nav { display: none; }
+            .mock-sidebar { display: none; }
+        }
+        @media (max-width: 600px) {
+            .features-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
+<body>
 
-<body class="text-gray-100 min-h-screen relative overflow-x-hidden">
+<header>
+    <div class="header-inner">
+        <span class="wordmark">Blink</span>
+        <nav>
+            <a href="#features">Features</a>
+            <a href="https://github.com/urboge/blink" target="_blank">GitHub</a>
+        </nav>
+        <a href="blink.html" class="btn-open">Open App</a>
+    </div>
+</header>
 
-    <div class="glow"></div>
-
-    <header class="border-b border-gray-800 backdrop-blur-md sticky top-0 z-50 bg-[#0B0F17]/80">
-        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-                <span class="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-blue-500 to-indigo-400 bg-clip-text text-transparent">Blink</span>
+<main>
+    <!-- HERO -->
+    <section class="hero">
+        <div>
+            <div class="hero-badge">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Private by default
             </div>
-            <nav class="hidden md:flex space-x-8 text-sm font-medium text-gray-400">
-                <a href="#features" class="hover:text-white transition">Features</a>
-                <a href="#how-it-works" class="hover:text-white transition">How it Works</a>
-                <a href="https://github.com/urboge/blink" target="_blank" class="hover:text-white transition">GitHub</a>
-            </nav>
-            <div>
-                <a href="blink.html" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition shadow-lg shadow-blue-600/20">
-                    Open App
+            <h1>Messages that<br><em>disappear.</em></h1>
+            <p class="hero-sub">No data harvesting. No ads. Just fast, private messaging between people who actually trust each other.</p>
+            <div class="hero-cta">
+                <a href="blink.html" class="btn-primary">
+                    Open Blink
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                 </a>
+                <a href="https://github.com/urboge/blink" target="_blank" class="btn-secondary">View on GitHub →</a>
             </div>
         </div>
-    </header>
 
-    <main class="max-w-7xl mx-auto px-6 pt-16 pb-24 relative z-10">
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
-            <div class="lg:col-span-5 text-center lg:text-left space-y-6">
-                <div class="inline-flex items-center space-x-2 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full text-xs font-semibold text-blue-400">
-                    <span>✨ Instant Messaging Redefined</span>
+        <div class="hero-visual">
+            <div class="mockup-shell">
+                <div class="mockup-bar">
+                    <div class="dot dot-r"></div>
+                    <div class="dot dot-y"></div>
+                    <div class="dot dot-g"></div>
+                    <span>blink.html</span>
                 </div>
-                <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-none text-white">
-                    Chat in a <span class="bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">Blink</span>.
-                </h1>
-                <p class="text-lg text-gray-400 font-medium max-w-lg mx-auto lg:mx-0">
-                    No sign-ups. No passwords. No data tracking. Just instant, lightning-fast communication straight from your browser.
-                </p>
-
-                <div class="pt-4 max-w-md mx-auto lg:mx-0">
-                    <form action="blink.html" method="GET" class="flex items-center bg-gray-900/80 border border-gray-800 rounded-xl p-2 focus-within:border-blue-500 transition shadow-inner">
-                        <input type="text" name="room" placeholder="Create a room name..." class="bg-transparent flex-1 px-3 text-white placeholder-gray-500 outline-none text-sm" required>
-                        <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm px-5 py-2.5 rounded-lg transition-all flex items-center gap-1">
-                            Start Chatting
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                            </svg>
-                        </button>
-                    </form>
-                    <p class="text-xs text-gray-500 text-left mt-2 pl-3">Join right now for free!</p>
-                </div>
-            </div>
-
-            <div class="lg:col-span-7 flex justify-center">
-                <div class="relative group w-full max-w-2xl bg-gray-900 border border-gray-800 rounded-2xl p-2 shadow-2xl shadow-blue-900/10 overflow-hidden">
-                    <div class="flex items-center space-x-1.5 pb-2 px-2 border-b border-gray-800/50 mb-1">
-                        <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
-                        <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
-                        <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
-                        <span class="text-xs text-gray-600 font-mono pl-4">blink-chat-preview.png</span>
+                <div class="mockup-screen">
+                    <div class="mock-sidebar">
+                        <div class="mock-header">Blink</div>
+                        <div class="mock-row active">
+                            <div class="mock-av" style="background:#3a3a3c;">A</div>
+                            <div class="mock-info">
+                                <div class="mock-name">alex</div>
+                                <div class="mock-preview">hey, you there?</div>
+                            </div>
+                        </div>
+                        <div class="mock-row">
+                            <div class="mock-av" style="background:#2c2c2e;">S</div>
+                            <div class="mock-info">
+                                <div class="mock-name">sara</div>
+                                <div class="mock-preview">🎵 Voice message</div>
+                            </div>
+                        </div>
+                        <div class="mock-row">
+                            <div class="mock-av" style="background:#3a3a3c;">J</div>
+                            <div class="mock-info">
+                                <div class="mock-name">jake</div>
+                                <div class="mock-preview">seen</div>
+                            </div>
+                        </div>
                     </div>
-                    <img src="screenshot.png" alt="Blink App interface showcase" class="w-full h-auto rounded-xl object-cover border border-gray-800 group-hover:scale-[1.01] transition-transform duration-300">
+                    <div class="mock-chat">
+                        <div class="mock-bubble in">hey, you there?</div>
+                        <div class="mock-bubble out">
+                            yeah, what's up
+                            <div class="mock-time">Seen 17:21</div>
+                        </div>
+                        <div class="mock-bubble in">can you send me those files?</div>
+                        <div class="mock-bubble out">
+                            sure, one sec
+                            <div class="mock-time">17:22</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
+    </section>
 
-        <section id="features" class="mt-32 pt-16 border-t border-gray-900">
-            <div class="text-center max-w-3xl mx-auto mb-16">
-                <h2 class="text-3xl font-bold text-white tracking-tight">Why Choose Blink?</h2>
-                <p class="text-gray-400 mt-2">Built for speed, simplicity, and complete user freedom.</p>
+    <!-- FEATURES -->
+    <section class="features" id="features">
+        <div class="section-label">Why Blink</div>
+        <div class="section-title">Built different.</div>
+        <div class="features-grid">
+            <div class="feat-card">
+                <div class="feat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                </div>
+                <div class="feat-title">Instant delivery</div>
+                <div class="feat-desc">Messages arrive the moment you send them. No polling, no delays, no spinner.</div>
             </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-                <div class="bg-gray-900/40 border border-gray-800/60 p-6 rounded-2xl hover:border-gray-700 transition">
-                    <div class="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 mb-4 font-bold text-lg">⚡</div>
-                    <h3 class="text-lg font-semibold text-white mb-2">Blazing Fast</h3>
-                    <p class="text-sm text-gray-400 leading-relaxed">No bloatware, heavy scripts, or delays. Messages deliver instantly in real-time right when you type them.</p>
+            <div class="feat-card">
+                <div class="feat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 </div>
-                <div class="bg-gray-900/40 border border-gray-800/60 p-6 rounded-2xl hover:border-gray-700 transition">
-                    <div class="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 mb-4 font-bold text-lg">🔑</div>
-                    <h3 class="text-lg font-semibold text-white mb-2">Zero Login Required</h3>
-                    <p class="text-sm text-gray-400 leading-relaxed">Skip the registration forms. Create a unique room URL, share it with friends, and start messaging directly.</p>
-                </div>
-                <div class="bg-gray-900/40 border border-gray-800/60 p-6 rounded-2xl hover:border-gray-700 transition">
-                    <div class="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400 mb-4 font-bold text-lg">💸</div>
-                    <h3 class="text-lg font-semibold text-white mb-2">100% Free</h3>
-                    <p class="text-sm text-gray-400 leading-relaxed">No subscription models, no hidden paywalls, and no ads. Open-source communication for everyone.</p>
-                </div>
+                <div class="feat-title">No account needed</div>
+                <div class="feat-desc">Pick a username and go. No email, no phone number, no password to forget.</div>
             </div>
-        </section>
-    </main>
+            <div class="feat-card">
+                <div class="feat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </div>
+                <div class="feat-title">Private by design</div>
+                <div class="feat-desc">No data sold, no ads, no analytics on your conversations. What you say stays between you.</div>
+            </div>
+            <div class="feat-card">
+                <div class="feat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </div>
+                <div class="feat-title">Voice & stickers</div>
+                <div class="feat-desc">Send voice messages, stickers and images — not just text. Real conversations.</div>
+            </div>
+            <div class="feat-card">
+                <div class="feat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                </div>
+                <div class="feat-title">Group chats</div>
+                <div class="feat-desc">Create groups in seconds. Add people by username — no invite links, no codes.</div>
+            </div>
+            <div class="feat-card">
+                <div class="feat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                </div>
+                <div class="feat-title">Works everywhere</div>
+                <div class="feat-desc">Any browser, any device. No app store, no install. Just open and talk.</div>
+            </div>
+        </div>
+    </section>
+</main>
 
-    <footer class="border-t border-gray-900 bg-[#070a10] text-gray-500 py-8 text-center text-xs">
-        <p>&copy; 2026 Blink Chat. Hosted on GitHub Pages by <a href="https://github.com/urboge" target="_blank" class="text-gray-400 hover:underline">urboge</a>.</p>
-    </footer>
+<footer>
+    <p>&copy; 2026 Blink. Built by <a href="https://github.com/urboge" target="_blank">urboge</a>.</p>
+</footer>
 
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            if (!localStorage.getItem('cookieConsent')) {
-                createConsentBanner();
-            }
-        });
+<!-- COOKIE BANNER -->
+<div id="cookie-banner" style="display:none;">
+    <span>We use Google Analytics to understand traffic. No personal data is sold.</span>
+    <div class="cookie-btns">
+        <button class="cookie-btn cookie-reject" onclick="cookieChoice('denied')">Reject</button>
+        <button class="cookie-btn cookie-accept" onclick="cookieChoice('granted')">Accept</button>
+    </div>
+</div>
 
-        function createConsentBanner() {
-            const banner = document.createElement('div');
-            banner.id = 'custom-cookie-banner';
-            
-            banner.style.position = 'fixed';
-            banner.style.bottom = '20px';
-            banner.style.left = '50%';
-            banner.style.transform = 'translateX(-50%)';
-            banner.style.width = '90%';
-            banner.style.maxWidth = '600px';
-            banner.style.backgroundColor = '#1a1a1a';
-            banner.style.color = '#ffffff';
-            banner.style.padding = '20px';
-            banner.style.borderRadius = '8px';
-            banner.style.boxShadow = '0px 4px 15px rgba(0,0,0,0.3)';
-            banner.style.fontFamily = 'sans-serif';
-            banner.style.zIndex = '999999';
-            banner.style.display = 'flex';
-            banner.style.flexDirection = 'column';
-            banner.style.gap = '15px';
-
-            const text = document.createElement('p');
-            text.style.margin = '0';
-            text.style.fontSize = '14px';
-            text.style.lineHeight = '1.5';
-            text.innerHTML = 'We use cookies to analyze our website traffic via Google Analytics. You can choose to accept or reject this tracking.';
-            banner.appendChild(text);
-
-            const buttonContainer = document.createElement('div');
-            buttonContainer.style.display = 'flex';
-            buttonContainer.style.gap = '10px';
-            buttonContainer.style.justifyContent = 'flex-end';
-
-            const rejectBtn = document.createElement('button');
-            rejectBtn.innerText = 'Reject All';
-            setButtonStyle(rejectBtn, '#444444');
-            rejectBtn.onclick = function() {
-                localStorage.setItem('cookieConsent', 'denied');
-                banner.remove();
-            };
-
-            const acceptBtn = document.createElement('button');
-            acceptBtn.innerText = 'Accept All';
-            setButtonStyle(acceptBtn, '#007bff');
-            acceptBtn.onclick = function() {
-                localStorage.setItem('cookieConsent', 'granted');
-                gtag('consent', 'update', {
-                    'analytics_storage': 'granted',
-                    'ad_storage': 'granted',
-                    'ad_user_data': 'granted',
-                    'ad_personalization': 'granted'
-                });
-                banner.remove();
-            };
-
-            buttonContainer.appendChild(rejectBtn);
-            buttonContainer.appendChild(acceptBtn);
-            banner.appendChild(buttonContainer);
-            document.body.appendChild(banner);
+<script>
+    function cookieChoice(choice) {
+        localStorage.setItem('cookieConsent', choice);
+        if (choice === 'granted') {
+            gtag('consent', 'update', { 'analytics_storage': 'granted', 'ad_storage': 'granted', 'ad_user_data': 'granted', 'ad_personalization': 'granted' });
         }
-
-        function setButtonStyle(button, bgColor) {
-            button.style.backgroundColor = bgColor;
-            button.style.color = 'white';
-            button.style.border = 'none';
-            button.style.padding = '10px 20px';
-            button.style.borderRadius = '4px';
-            button.style.cursor = 'pointer';
-            button.style.fontSize = '14px';
-            button.style.fontWeight = 'bold';
-            button.style.flex = '1';
-            button.style.maxWidth = '150px';
-        }
-    </script>
+        document.getElementById('cookie-banner').style.display = 'none';
+    }
+    if (!localStorage.getItem('cookieConsent')) {
+        document.getElementById('cookie-banner').style.display = 'flex';
+    }
+</script>
 </body>
 </html>
