@@ -132,10 +132,23 @@
       <span class="copy-hint">Copy</span>
     </div>
 
+    <!-- TIMETABLE SETUP BANNER -->
+    <div id="timetable-banner" style="display:none;">
+      <div id="timetable-banner-inner">
+        <span id="timetable-banner-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+        <div id="timetable-banner-text">
+          <strong>Set Up Timetable</strong>
+          <span>Let contacts see your current class</span>
+        </div>
+        <button id="timetable-banner-btn">Set Up</button>
+      </div>
+      <button id="timetable-banner-close">✕</button>
+    </div>
+
     <!-- PREMIUM BANNER -->
     <div id="premium-banner" style="display:none;">
       <div id="premium-banner-inner">
-        <span id="premium-banner-icon">⚡</span>
+        <span id="premium-banner-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#FFD600" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
         <div id="premium-banner-text">
           <strong id="premium-banner-title">Try Blink Premium</strong>
           <span id="premium-banner-sub">Hide read receipts · Profile badge</span>
@@ -266,8 +279,9 @@
       <div id="badge-emoji-grid"></div>
     </div>
 
-    <button class="settings-action-btn premium-settings-btn" id="settings-premium-btn" style="margin-top:8px;">⚡ Blink Premium</button>
-    <button class="settings-action-btn" id="settings-sync-btn" style="margin-top:8px;">🔄 Sync Devices</button>
+    <button class="settings-action-btn premium-settings-btn" id="settings-premium-btn" style="margin-top:8px;display:flex;align-items:center;gap:7px;justify-content:center;"><svg viewBox="0 0 24 24" fill="none" stroke="#FFD600" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Blink Premium</button>
+    <button class="settings-action-btn" id="settings-timetable-btn" style="margin-top:8px;display:flex;align-items:center;gap:7px;justify-content:center;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Timetable</button>
+    <button class="settings-action-btn" id="settings-sync-btn" style="margin-top:8px;display:flex;align-items:center;gap:7px;justify-content:center;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Sync Devices</button>
     <div class="settings-row" id="settings-row-analytics">
       <div>
         <div class="settings-label">Usage Analytics</div>
@@ -278,7 +292,7 @@
         <span class="toggle-slider"></span>
       </label>
     </div>
-    <button class="settings-action-btn" id="settings-feedback-btn" style="margin-top:8px;">🐛 Report a Bug / Feedback</button>
+    <button class="settings-action-btn" id="settings-feedback-btn" style="margin-top:8px;display:flex;align-items:center;gap:7px;justify-content:center;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> Report a Bug / Feedback</button>
     <div id="manage-devices-section" style="display:none;">
       <div class="settings-label" style="margin-top:12px;">Linked Devices</div>
       <div id="manage-devices-list"></div>
@@ -293,7 +307,7 @@
   <div id="premium-modal-inner">
     <button id="premium-modal-close" class="premium-close-btn">✕</button>
     <div id="premium-modal-header">
-      <div id="premium-modal-icon">⚡</div>
+      <div id="premium-modal-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#FFD600" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="32" height="32"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
       <h2>Blink Premium</h2>
       <p>Unlock powerful features with BP you've already earned</p>
     </div>
@@ -789,6 +803,62 @@
 </div>
 
 <div id="toast"></div>
+
+<!-- TIMETABLE MODAL -->
+<div class="modal-overlay" id="timetable-overlay">
+  <div id="timetable-panel">
+    <div id="timetable-header">
+      <span>Timetable</span>
+      <button id="timetable-close">✕</button>
+    </div>
+    <!-- Weekly grid -->
+    <div id="timetable-week-grid">
+      <div class="tt-day-col" data-day="Mon"><div class="tt-day-label">Mon</div><div class="tt-lessons" id="tt-lessons-Mon"></div></div>
+      <div class="tt-day-col" data-day="Tue"><div class="tt-day-label">Tue</div><div class="tt-lessons" id="tt-lessons-Tue"></div></div>
+      <div class="tt-day-col" data-day="Wed"><div class="tt-day-label">Wed</div><div class="tt-lessons" id="tt-lessons-Wed"></div></div>
+      <div class="tt-day-col" data-day="Thu"><div class="tt-day-label">Thu</div><div class="tt-lessons" id="tt-lessons-Thu"></div></div>
+      <div class="tt-day-col" data-day="Fri"><div class="tt-day-label">Fri</div><div class="tt-lessons" id="tt-lessons-Fri"></div></div>
+    </div>
+    <button id="tt-add-lesson-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add Lesson
+    </button>
+    <!-- Add/Edit lesson form -->
+    <div id="tt-lesson-form" style="display:none;">
+      <div class="tt-form-row">
+        <label>Day</label>
+        <select id="tt-form-day">
+          <option value="Mon">Monday</option>
+          <option value="Tue">Tuesday</option>
+          <option value="Wed">Wednesday</option>
+          <option value="Thu">Thursday</option>
+          <option value="Fri">Friday</option>
+        </select>
+      </div>
+      <div class="tt-form-row">
+        <label>Start</label>
+        <input type="time" id="tt-form-start">
+      </div>
+      <div class="tt-form-row">
+        <label>End</label>
+        <input type="time" id="tt-form-end">
+      </div>
+      <div class="tt-form-row">
+        <label>Subject</label>
+        <input type="text" id="tt-form-subject" placeholder="e.g. Maths">
+      </div>
+      <div class="tt-form-row">
+        <label>Room</label>
+        <input type="text" id="tt-form-room" placeholder="e.g. 204">
+      </div>
+      <div id="tt-form-actions">
+        <button id="tt-form-cancel">Cancel</button>
+        <button id="tt-form-save">Save Lesson</button>
+      </div>
+    </div>
+    <button id="tt-save-all-btn">Save Timetable</button>
+  </div>
+</div>
 
 <!-- ANALYTICS CONSENT BANNER -->
 <div id="consent-banner">
