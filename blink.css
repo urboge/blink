@@ -1146,6 +1146,54 @@ body {
   transition: background 0.15s; text-align: left;
 }
 #attach-menu button:hover { background: var(--contact-active); }
+
+/* AI mode pill */
+#ai-mode-bar {
+  display: none; align-items: center; gap: 8px;
+  flex: 1;
+  background: rgba(30,30,34,0.7); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.09); border-radius: 22px;
+  padding: 9px 14px;
+  font-size: 13px; color: rgba(255,255,255,0.55); font-weight: 600;
+  min-height: 0;
+}
+#ai-mode-bar span { flex: 1; }
+#ai-mode-cancel {
+  background: rgba(255,255,255,0.08); border: none; border-radius: 50%;
+  color: rgba(255,255,255,0.5); font-size: 13px; cursor: pointer;
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+  line-height: 1; flex-shrink: 0;
+}
+#ai-mode-cancel:hover { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.9); }
+
+/* AI reply bubble */
+.ai-reply-bubble {
+  background: rgba(255,255,255,0.07) !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+  color: var(--text-primary) !important;
+}
+.ai-reply-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.4);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px;
+}
+
+/* Typing dots */
+.typing-bubble {
+  display: flex !important; align-items: center; gap: 4px;
+  padding: 12px 16px !important;
+}
+.typing-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-secondary); display: inline-block;
+  animation: typingBounce 1.2s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
 #attach-menu button svg { width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; }
 
 /* FILE BUBBLE */
@@ -1901,10 +1949,23 @@ body {
   background: #ffffff; color: #000; border: none; border-radius: 10px;
   padding: 10px; font-size: 13px; font-weight: 700; cursor: pointer;
 }
+#tt-upload-send {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
 #tt-upload-cancel-img {
   background: rgba(255,255,255,0.07); color: var(--text-primary); border: none;
   border-radius: 10px; padding: 10px; font-size: 13px; cursor: pointer;
 }
+#tt-ai-scanning {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 14px; color: var(--text-secondary); font-size: 13px;
+}
+.tt-scanning-spinner {
+  width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.15);
+  border-top-color: #fff; border-radius: 50%;
+  animation: spin 0.7s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ─── PREMIUM BANNER ──────────────────────────────────────────────────────── */
 #premium-banner {
