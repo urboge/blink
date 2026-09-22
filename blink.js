@@ -2907,7 +2907,11 @@ function renderContacts(filter = '') {
       else if (last.type === 'file')    preview = '📎 File';
       else if (last.type === 'snap')    preview = last.opened ? '📸 Opened' : (last.sent ? '📸 Blink sent' : '📸 New Blink!');
       else if (last.type === 'group_invite') preview = '👥 Group invite';
-      else preview = (last.sent ? 'You: ' : (last.senderName ? last.senderName + ': ' : '')) + last.text;
+      else {
+        const prefix = last.isAiReply ? '🤖 Blink AI: ' : (last.sent ? 'You: ' : (last.senderName ? last.senderName + ': ' : ''));
+        const raw = prefix + (last.text || '');
+        preview = raw.length > 50 ? raw.slice(0, 50) + '…' : raw;
+      }
     }
     const streakInfo = type === 'dm' ? streaks[data.code] : null;
     const streakHtml = (streakInfo && streakInfo.count > 0) ? `<div class="contact-streak">🔥 ${streakInfo.count}</div>` : '';
@@ -2965,6 +2969,7 @@ function updateEditActions() {
 // ─── OPEN DM ──────────────────────────────────────────────────────────────────
 function openChat(code) {
   if (activeCode && activeCode !== code) analyticsOnChatClose(activeCode);
+  exitAiMode();
   activeCode = code; activeType = 'dm';
   const contact = contacts.find(c => c.code === code);
   if (!contact) return;
@@ -3151,6 +3156,12 @@ function renderMessages(code, type = 'dm') {
       const imgSrc = m.text;
       bubble.innerHTML = `<img src="${imgSrc}" alt="image" onerror="this.parentElement.innerHTML='🖼 Failed to load'">`;
       bubble.querySelector('img').addEventListener('click', () => openLightbox(imgSrc));
+    } else if (m.isTyping || m.isAiTyping) {
+      bubble.className = 'bubble typing-bubble';
+      bubble.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+    } else if (m.isAiReply) {
+      bubble.className = 'bubble ai-reply-bubble';
+      bubble.innerHTML = `<div class="ai-reply-label"><img src="blinkai.png" style="width:12px;height:12px;border-radius:50%;object-fit:cover;"> Blink AI</div>${escHtml(m.text)}`;
     } else {
       bubble.className = 'bubble';
       bubble.innerHTML = escHtml(m.text);
@@ -3601,6 +3612,24 @@ async function sendMessage() {
     input.value = ''; input.style.height = 'auto';
     document.getElementById('send-btn').disabled = true;
     clearReplyTarget();
+    return;
+  }
+
+  // Inline AI mode — send message normally then get AI reply
+  if (inlineAiMode) {
+    exitAiMode();
+    if (activeType === 'group') {
+      await sendGroupMessage(text, type, { msgId, replyTo });
+    } else {
+      addMessageToChat(activeCode, { msgId, text, time: Date.now(), sent: true, read: true, type, replyTo });
+      await pushToSupabase(activeCode, text, type, { msgId, replyTo: replyTo ? JSON.stringify(replyTo) : null });
+    }
+    trackMessageSent(type);
+    input.value = ''; input.style.height = 'auto';
+    document.getElementById('send-btn').disabled = true;
+    clearReplyTarget();
+    // Now get AI reply inline
+    await sendInlineAIMessage(text, msgId);
     return;
   }
 
@@ -4110,7 +4139,7 @@ async function pollMessages() {
       if (silentTypes.includes(r.type)) return;
       if (!r.text) return;
       ensureContact(r.from);
-      addMessageToChat(r.from, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration, replyTo: parseReplyTo(r.replyTo), storyReply: parseReplyTo(r.storyReply) });
+      addMessageToChat(r.from, { msgId: r.msgId, text: r.text, time: new Date(r.created_at).getTime(), sent: false, read: r.from===activeCode, type: r.type||'text', duration: r.duration, replyTo: parseReplyTo(r.replyTo), storyReply: parseReplyTo(r.storyReply), isAiReply: !!r.isAiReply });
 
       // Native Windows notification when running as desktop app and window is not focused
       if (window.blinkDesktop && document.hidden) {
@@ -4493,6 +4522,49 @@ document.getElementById('premium-banner-close').addEventListener('click', () => 
   sessionStorage.setItem('premiumBannerDismissed', '1');
 });
 
+// ─── INLINE AI IN CHAT ────────────────────────────────────────────────────────
+async function sendInlineAIMessage(userText, replyToMsgId) {
+  const chat = activeCode;
+  const type = activeType;
+
+  // Typing indicator
+  const typingId = 'aityping_' + Date.now();
+  addMessageToChat(chat, { msgId: typingId, text: '...', time: Date.now(), sent: false, read: true, type: 'text', isAiTyping: true });
+  renderMessages(chat, type);
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/blinkai`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: BLINKAI_SYSTEM },
+          { role: 'user', content: userText }
+        ]
+      })
+    });
+
+    // Remove typing indicator
+    if (chats[chat]) { chats[chat] = chats[chat].filter(m => m.msgId !== typingId); saveChats(); }
+
+    if (!res.ok) { renderMessages(chat, type); return; }
+    const data = await res.json();
+    const reply = data.choices?.[0]?.message?.content || 'No response.';
+    const aiMsgId = generateMsgId();
+    addMessageToChat(chat, { msgId: aiMsgId, text: reply, time: Date.now(), sent: true, read: true, type: 'text', isAiReply: true });
+    // Push AI reply to Supabase so the other person sees it too
+    if (type === 'group') {
+      await sendGroupMessage(`🤖 Blink AI: ${reply}`, 'text', { msgId: aiMsgId });
+    } else {
+      await pushToSupabase(chat, reply, 'text', { msgId: aiMsgId, isAiReply: true });
+    }
+  } catch(e) {
+    if (chats[chat]) { chats[chat] = chats[chat].filter(m => m.msgId !== typingId); saveChats(); }
+  }
+  renderMessages(chat, type);
+  renderContacts(document.getElementById('search').value);
+}
+
 // ─── BLINK AI ─────────────────────────────────────────────────────────────────
 const BLINKAI_SYSTEM = `You are Blink AI, a helpful assistant built into Blink — a private messaging app for students. You help with homework, explaining concepts, answering questions, and anything students need. Be concise, friendly, and smart. Never reveal your underlying model.`;
 
@@ -4781,6 +4853,92 @@ document.getElementById('tt-save-all-btn').addEventListener('click', () => {
   saveTimetable();
   document.getElementById('timetable-overlay').classList.remove('open');
   toast('Timetable saved');
+});
+
+// ── Timetable AI screenshot scan ──────────────────────────────────────────────
+let ttScreenshotBase64 = null;
+
+document.getElementById('tt-upload-btn').addEventListener('click', () => {
+  document.getElementById('tt-screenshot-input').click();
+});
+
+document.getElementById('tt-screenshot-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    ttScreenshotBase64 = ev.target.result; // full data URL
+    const img = document.getElementById('tt-upload-img');
+    img.src = ttScreenshotBase64;
+    document.getElementById('tt-upload-preview').style.display = 'flex';
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+});
+
+document.getElementById('tt-upload-cancel-img').addEventListener('click', () => {
+  ttScreenshotBase64 = null;
+  document.getElementById('tt-upload-preview').style.display = 'none';
+  document.getElementById('tt-upload-img').src = '';
+});
+
+document.getElementById('tt-upload-send').addEventListener('click', async () => {
+  if (!ttScreenshotBase64) return;
+  document.getElementById('tt-upload-preview').style.display = 'none';
+  document.getElementById('tt-ai-scanning').style.display = 'flex';
+
+  try {
+    // Strip data URL prefix to get pure base64
+    const base64 = ttScreenshotBase64.split(',')[1];
+    const mimeMatch = ttScreenshotBase64.match(/^data:([^;]+);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/blinkaitimetable`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_KEY}`
+      },
+      body: JSON.stringify({ image: base64, mime })
+    });
+
+    document.getElementById('tt-ai-scanning').style.display = 'none';
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('[tt-ai] error', res.status, err);
+      toast('AI scan failed. Try again.');
+      return;
+    }
+
+    const data = await res.json();
+    if (!data.schedule) { toast('Could not read timetable. Try a clearer image.'); return; }
+
+    // Merge AI-parsed schedule into myTimetable
+    let added = 0;
+    for (const [day, lessons] of Object.entries(data.schedule)) {
+      if (!Array.isArray(lessons)) continue;
+      if (!myTimetable[day]) myTimetable[day] = [];
+      for (const lesson of lessons) {
+        if (!lesson.subject || !lesson.start || !lesson.end) continue;
+        myTimetable[day].push({ start: lesson.start, end: lesson.end, subject: lesson.subject, room: lesson.room || '' });
+        added++;
+      }
+    }
+
+    renderTimetableGrid();
+    ttScreenshotBase64 = null;
+
+    if (added === 0) {
+      toast('AI couldn\'t find any lessons. Try a clearer image.');
+    } else {
+      toast(`AI added ${added} lesson${added !== 1 ? 's' : ''} — review and save`);
+    }
+  } catch(e) {
+    console.error('[tt-ai] fetch failed', e);
+    document.getElementById('tt-ai-scanning').style.display = 'none';
+    toast('Could not reach AI. Check your connection.');
+  }
 });
 
 document.getElementById('timetable-banner-btn').addEventListener('click', () => {
@@ -5442,6 +5600,31 @@ document.getElementById('attach-photo-btn').addEventListener('click', () => {
 document.getElementById('attach-file-btn').addEventListener('click', () => {
   closeAllPanels();
   document.getElementById('generic-file-input').click();
+});
+
+// ── AI mode in chat ────────────────────────────────────────────────────────────
+let inlineAiMode = false;
+
+function enterAiMode() {
+  inlineAiMode = true;
+  document.getElementById('ai-mode-bar').style.display = 'flex';
+  document.getElementById('msg-input').placeholder = 'Ask Blink AI anything…';
+  document.getElementById('msg-input').focus();
+  closeAllPanels();
+}
+
+function exitAiMode() {
+  inlineAiMode = false;
+  document.getElementById('ai-mode-bar').style.display = 'none';
+  document.getElementById('msg-input').placeholder = 'Message';
+}
+
+document.getElementById('attach-ai-btn').addEventListener('click', () => {
+  enterAiMode();
+});
+
+document.getElementById('ai-mode-cancel').addEventListener('click', () => {
+  exitAiMode();
 });
 document.getElementById('image-file-input').addEventListener('change', async e=>{
   const file=e.target.files[0];e.target.value='';
