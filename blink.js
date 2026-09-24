@@ -1323,10 +1323,6 @@ const ACCENT_PRESETS = [
 
 function applyTheme() {
   document.body.classList.toggle('light-mode', isLightMode);
-  const hint = document.getElementById('theme-hint');
-  if (hint) hint.textContent = isLightMode ? 'Currently light' : 'Currently dark';
-  const toggle = document.getElementById('light-mode-toggle');
-  if (toggle) toggle.checked = isLightMode;
 }
 
 function applyAccentColor(hex) {
@@ -1404,13 +1400,13 @@ function updatePremiumUI() {
 }
 
 function updatePremiumBadgeInSettings() {
-  const btn = document.getElementById('settings-premium-btn');
-  if (!btn) return;
+  const sub = document.getElementById('premium-sub-text');
+  if (!sub) return;
   if (myPremiumTier) {
     const daysLeft = Math.ceil((myPremiumExpiry - Date.now()) / 86400000);
-    btn.textContent = `⚡ ${myPremiumTier === 'max' ? 'Max' : 'Pro'} — ${daysLeft}d left`;
+    sub.innerHTML = `<span style="color:#fff;font-weight:600;">${myPremiumTier === 'max' ? 'Max' : 'Pro'} — ${daysLeft}d left</span>`;
   } else {
-    btn.textContent = '⚡ Blink Premium';
+    sub.textContent = 'Unlock PRO & MAX features';
   }
 }
 
@@ -5256,42 +5252,8 @@ document.getElementById('hide-receipts-toggle').addEventListener('change', e => 
   toast(hideReadReceipts ? 'Read receipts hidden' : 'Read receipts visible');
 });
 
-// Light mode toggle (Max only)
-document.getElementById('light-mode-toggle').addEventListener('change', e => {
-  if (myPremiumTier !== 'max') {
-    e.target.checked = false;
-    openPremiumModal();
-    return;
-  }
-  isLightMode = e.target.checked;
-  ls('isLightMode', isLightMode ? '1' : '0');
-  applyTheme();
-  toast(isLightMode ? '☀️ Light mode on' : '🌙 Dark mode on');
-});
-
-// Accent hex input (Max only)
-document.getElementById('accent-hex-input').addEventListener('change', e => {
-  if (myPremiumTier !== 'max') { openPremiumModal(); return; }
-  const val = e.target.value.replace('#','').trim();
-  if (/^[0-9a-fA-F]{6}$/.test(val)) {
-    applyAccentColor('#' + val);
-    ls('myAccentColor', myAccentColor);
-  }
-});
-document.getElementById('accent-hex-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') e.target.dispatchEvent(new Event('change'));
-});
-
-// Native color picker (Max only)
-document.getElementById('accent-color-native').addEventListener('input', e => {
-  if (myPremiumTier !== 'max') { openPremiumModal(); return; }
-  applyAccentColor(e.target.value);
-  ls('myAccentColor', myAccentColor);
-});
-
-// Build swatches when settings opens
+// Build accent swatches / theme when settings opens (kept for any remaining callers)
 document.getElementById('settings-btn').addEventListener('click', () => {
-  buildAccentSwatches();
   applyTheme();
 }, true);
 
