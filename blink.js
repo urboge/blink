@@ -80,8 +80,31 @@ const isMobile      = () => window.innerWidth <= 640;
 // ─── LOCALSTORAGE ─────────────────────────────────────────────────────────────
 function ls(key, val) {
   if (val === undefined) return localStorage.getItem(key);
-  localStorage.setItem(key, typeof val === 'string' ? val : JSON.stringify(val));
+  try {
+    localStorage.setItem(key, typeof val === 'string' ? val : JSON.stringify(val));
+  } catch(e) {
+    if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+      trimChatsStorage();
+      try {
+        localStorage.setItem(key, typeof val === 'string' ? val : JSON.stringify(val));
+      } catch(e2) { console.warn('[blink] localStorage still full after trim:', e2); }
+    }
+  }
 }
+
+function trimChatsStorage() {
+  try {
+    // Trim all chats to 60 messages, then try harder with 30
+    Object.keys(chats).forEach(k => { if (chats[k]?.length > 60) chats[k] = chats[k].slice(-60); });
+    localStorage.setItem('chats', JSON.stringify(chats));
+  } catch(e) {
+    try {
+      Object.keys(chats).forEach(k => { if (chats[k]?.length > 30) chats[k] = chats[k].slice(-30); });
+      localStorage.setItem('chats', JSON.stringify(chats));
+    } catch(e2) { console.warn('[blink] trimChatsStorage hard fail:', e2); }
+  }
+}
+
 function saveContacts()       { ls('contacts',       JSON.stringify(contacts)); }
 function saveChats()          { ls('chats',          JSON.stringify(chats)); }
 function saveGroups()         { ls('groups',         JSON.stringify(groups)); }
@@ -4363,10 +4386,25 @@ function closeAllPanels() {
 
 // ─── STORAGE ──────────────────────────────────────────────────────────────────
 function enforceStorageLimit(code) {
-  if (chats[code]?.length > 500) chats[code] = chats[code].slice(-500);
+  // Hard cap per chat
+  if (chats[code]?.length > 200) chats[code] = chats[code].slice(-200);
   try {
     const used = new Blob([JSON.stringify(chats)]).size;
-    if (used > 4*1024*1024) Object.keys(chats).forEach(k => { if(chats[k].length>50) chats[k]=chats[k].slice(-50); });
+    // Aggressively trim if approaching localStorage limit
+    if (used > 3.5 * 1024 * 1024) {
+      Object.keys(chats).forEach(k => { if (chats[k].length > 60) chats[k] = chats[k].slice(-60); });
+    }
+    if (used > 4.2 * 1024 * 1024) {
+      // Emergency: strip image data URLs from older messages (keep thumbnails only)
+      Object.keys(chats).forEach(k => {
+        chats[k] = chats[k].map((m, i) => {
+          if (i < chats[k].length - 30 && m.type === 'image' && m.text?.startsWith('data:')) {
+            return { ...m, text: '[image]', type: 'text' };
+          }
+          return m;
+        });
+      });
+    }
   } catch(e) {}
 }
 
@@ -5608,14 +5646,21 @@ let inlineAiMode = false;
 function enterAiMode() {
   inlineAiMode = true;
   document.getElementById('ai-mode-bar').style.display = 'flex';
+  document.getElementById('msg-input-wrap').style.display = 'none';
   document.getElementById('msg-input').placeholder = 'Ask Blink AI anything…';
-  document.getElementById('msg-input').focus();
   closeAllPanels();
+  // Move textarea into pill so user can type
+  document.getElementById('ai-mode-bar').appendChild(document.getElementById('msg-input'));
+  document.getElementById('msg-input').focus();
 }
 
 function exitAiMode() {
   inlineAiMode = false;
+  // Move textarea back into its wrap
+  const wrap = document.getElementById('msg-input-wrap');
+  wrap.appendChild(document.getElementById('msg-input'));
   document.getElementById('ai-mode-bar').style.display = 'none';
+  wrap.style.display = 'flex';
   document.getElementById('msg-input').placeholder = 'Message';
 }
 
