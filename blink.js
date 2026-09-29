@@ -1,6 +1,82 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const SUPABASE_URL      = 'https://gkrfiyalbjbgkjevmpod.supabase.co';
-const SUPABASE_KEY      = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrcmZpeWFsYmpiZ2tqZXZtcG9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjA0OTksImV4cCI6MjA5NzE5NjQ5OX0.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
+const SERVERS = [
+  {
+    url: 'https://gkrfiyalbjbgkjevmpod.supabase.co',
+    key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrcmZpeWFsYmpiZ2tqZXZtcG9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjA0OTksImV4cCI6MjA5NzE5NjQ5OX0.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY',
+    primary: true
+  },
+  {
+    url: 'https://zwkfywtsffwhceuhlrwaf.supabase.co',
+    key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3a2Z5d3RzZndoY2V1aGxyd2FmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA2OTAxNzEsImV4cCI6MjEwNjI2NjE3MX0.gbCOhb1jm480tZ6auIfvIb1OORIinWhXhTKgN7m9wzg',
+    primary: false
+  }
+];
+let activeServerIdx = 0;
+let degradedMode    = false; // true when running on backup server
+
+// Convenience getters — always read from active server
+function SUPABASE_URL() { return SERVERS[activeServerIdx].url; }
+function SUPABASE_KEY() { return SERVERS[activeServerIdx].key; }
+
+// Primary server is always used for Edge Functions (AI) — they only exist there
+function PRIMARY_URL() { return SERVERS[0].url; }
+function PRIMARY_KEY() { return SERVERS[0].key; }
+
+// Direct fetch to primary server — for Edge Functions only, no failover
+// Strips 'apikey' header — Edge Functions reject it with CORS error
+async function primaryFetch(path, options = {}) {
+  const { apikey: _ignored, ...callerHeaders } = options.headers || {};
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${PRIMARY_KEY()}`,
+    ...callerHeaders
+  };
+  return fetch(PRIMARY_URL() + path, { ...options, headers });
+}
+
+// Core fetch wrapper — auto-failover on 503 / 429 / network error
+async function sbFetch(path, options = {}) {
+  const tried = new Set();
+  for (let attempt = 0; attempt < SERVERS.length; attempt++) {
+    const idx = (activeServerIdx + attempt) % SERVERS.length;
+    if (tried.has(idx)) break;
+    tried.add(idx);
+    const srv = SERVERS[idx];
+    const headers = {
+      'apikey': srv.key,
+      'Authorization': `Bearer ${srv.key}`,
+      ...(options.headers || {})
+    };
+    try {
+      const res = await fetch(srv.url + path, { ...options, headers });
+      if (res.status === 503 || res.status === 429 || res.status === 502) {
+        // This server is busy — try the next one
+        continue;
+      }
+      // Success — lock onto this server if it changed
+      if (idx !== activeServerIdx) {
+        activeServerIdx = idx;
+        setDegradedMode(!SERVERS[idx].primary);
+      }
+      return res;
+    } catch(e) {
+      // Network error — try next
+      continue;
+    }
+  }
+  // All servers failed — stay on current, throw so callers can handle
+  throw new Error('All Blink servers are busy. Try again in a moment.');
+}
+
+function setDegradedMode(on) {
+  if (degradedMode === on) return;
+  degradedMode = on;
+  const banner = document.getElementById('degraded-banner');
+  if (banner) banner.style.display = on ? 'flex' : 'none';
+  if (on) toast('⚠️ Backup server active — images & stickers paused');
+  else toast('✅ Back on main server');
+}
+
 const TABLE             = 'messages';
 const POLL_INTERVAL     = 3000;
 const SERVER_LIMIT      = 500;
@@ -14,6 +90,12 @@ let myUsername       = '';
 let myAvatar         = '';
 let myBadgeEmoji     = '';     // single emoji badge (Pro/Max feature)
 let hideReadReceipts = false;  // Pro/Max: don't send seen confirmations
+
+// ─── SPAM PROTECTION ──────────────────────────────────────────────────────────
+const SPAM_THRESHOLD  = 2;      // messages before cooldown kicks in
+const SPAM_COOLDOWN   = 5000;   // cooldown in ms
+let spamMsgTimes      = [];     // timestamps of recent sends
+let spamCooldownTimer = null;   // active countdown interval
 let isLightMode      = false;  // Max: light/dark toggle
 let myAccentColor    = '#ffffff'; // Max: custom accent color
 let avatars          = {};
@@ -176,9 +258,8 @@ async function compressImage(file, maxBytes = MAX_IMAGE_BYTES, maxDim = 1200, st
 // ─── USERNAME REGISTRY ────────────────────────────────────────────────────────
 async function isUsernameTaken(username) {
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/usernames?username=eq.${encodeURIComponent(username)}&select=username`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/usernames?username=eq.${encodeURIComponent(username)}&select=username`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) return false;
     const rows = await res.json();
@@ -187,18 +268,18 @@ async function isUsernameTaken(username) {
 }
 async function registerUsername(username) {
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/usernames`, {
+    await sbFetch(`/rest/v1/usernames`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify({ username })
     });
   } catch(e) {}
 }
 async function releaseUsername(username) {
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/usernames?username=eq.${encodeURIComponent(username)}`, {
+    await sbFetch(`/rest/v1/usernames?username=eq.${encodeURIComponent(username)}`, {
       method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
     });
   } catch(e) {}
 }
@@ -216,11 +297,11 @@ function getOrCreateDeviceId() {
 async function registerDevice() {
   if (!myUsername || !myDeviceId) return;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/devices`, {
+    const res = await sbFetch(`/rest/v1/devices`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`,
         'Prefer': 'resolution=merge-duplicates,return=minimal'
       },
       body: JSON.stringify({
@@ -240,8 +321,8 @@ async function checkinDevice() {
   if (Date.now() - lastSyncCheckin < DEVICE_CHECKIN_INTERVAL) return;
   lastSyncCheckin = Date.now();
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${myDeviceId}&select=force_signed_out`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+    const res = await sbFetch(`/rest/v1/devices?device_id=eq.${myDeviceId}&select=force_signed_out`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } });
     if (res.ok) {
       const rows = await res.json();
       if (rows[0]?.force_signed_out) {
@@ -252,9 +333,9 @@ async function checkinDevice() {
         return;
       }
     }
-    await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${myDeviceId}`, {
+    await sbFetch(`/rest/v1/devices?device_id=eq.${myDeviceId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify({ last_seen: new Date().toISOString() })
     });
   } catch(e) {}
@@ -273,9 +354,8 @@ function guessDeviceLabel() {
 async function getMyOtherDevices() {
   if (!myUsername) return [];
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/devices?username=eq.${encodeURIComponent(myUsername)}&device_id=neq.${myDeviceId}&select=*`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/devices?username=eq.${encodeURIComponent(myUsername)}&device_id=neq.${myDeviceId}&select=*`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) return [];
     return await res.json();
@@ -288,9 +368,8 @@ async function getMyOtherDevices() {
 async function getAllMyDevices() {
   if (!myUsername) return [];
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/devices?username=eq.${encodeURIComponent(myUsername)}&select=*&order=created_at.asc`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/devices?username=eq.${encodeURIComponent(myUsername)}&select=*&order=created_at.asc`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) return [];
     return await res.json();
@@ -307,9 +386,9 @@ function isPrimaryDevice(allDevices) {
 // can wipe its own local data and return to the welcome screen.
 async function removeOtherDevice(deviceId) {
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${encodeURIComponent(deviceId)}`, {
+    await sbFetch(`/rest/v1/devices?device_id=eq.${encodeURIComponent(deviceId)}`, {
       method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
     });
     await pushToSupabase(myUsername, '', 'device_removed', { targetDeviceId: deviceId });
     deviceListCache.delete(myUsername); // force fresh lookup next send
@@ -321,9 +400,9 @@ async function removeOtherDevice(deviceId) {
 // username, since other devices may still be actively using it.
 async function unregisterThisDevice() {
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${myDeviceId}`, {
+    await sbFetch(`/rest/v1/devices?device_id=eq.${myDeviceId}`, {
       method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
     });
   } catch(e) {}
 }
@@ -342,9 +421,9 @@ async function respondToLinkRequest(targetUsername, requestingDeviceId) {
   // This device (the existing, logged-in one) generates a code and stores it server-side
   const code = generateLinkCode();
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/link_requests`, {
+    await sbFetch(`/rest/v1/link_requests`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify({ target_username: myUsername, requesting_device_id: requestingDeviceId, code })
     });
   } catch(e) {}
@@ -359,9 +438,8 @@ async function submitLinkCode(targetUsername, requestingDeviceId, enteredCode) {
 async function verifyAndApproveLinkConfirm(requestingDeviceId, submittedCode) {
   // Runs on the EXISTING device. Looks up the real pending code server-side.
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/link_requests?requesting_device_id=eq.${encodeURIComponent(requestingDeviceId)}&target_username=eq.${encodeURIComponent(myUsername)}&order=created_at.desc&limit=1&select=*`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/link_requests?requesting_device_id=eq.${encodeURIComponent(requestingDeviceId)}&target_username=eq.${encodeURIComponent(myUsername)}&order=created_at.desc&limit=1&select=*`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) return false;
     const rows = await res.json();
@@ -374,18 +452,18 @@ async function verifyAndApproveLinkConfirm(requestingDeviceId, submittedCode) {
     if (req.attempts >= 5) return false; // rate limit
 
     if (req.code !== submittedCode) {
-      await fetch(`${SUPABASE_URL}/rest/v1/link_requests?id=eq.${req.id}`, {
+      await sbFetch(`/rest/v1/link_requests?id=eq.${req.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
         body: JSON.stringify({ attempts: req.attempts + 1 })
       });
       return false;
     }
 
     await pushRaw(myUsername, requestingDeviceId, JSON.stringify({ username: myUsername }), 'link_approved');
-    await fetch(`${SUPABASE_URL}/rest/v1/link_requests?id=eq.${req.id}`, {
+    await sbFetch(`/rest/v1/link_requests?id=eq.${req.id}`, {
       method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
     });
     return true;
   } catch(e) { return false; }
@@ -421,8 +499,8 @@ function stopLinkingPoll() {
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 async function fetchAppConfig() {
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_config?select=*`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+    const res = await sbFetch(`/rest/v1/app_config?select=*`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } });
     if (!res.ok) return {};
     const rows = await res.json();
     return Object.fromEntries(rows.map(r => [r.key, r.value]));
@@ -466,9 +544,8 @@ function showBroadcastBanner(message) {
 
 async function isUsernameBlacklisted(username) {
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/username_blacklist?username=eq.${encodeURIComponent(username)}&select=username,expires_at`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/username_blacklist?username=eq.${encodeURIComponent(username)}&select=username,expires_at`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) return false;
     const rows = await res.json();
@@ -495,10 +572,11 @@ function showBlockedScreen() {
 // admin dashboard instead of silently failing in someone's browser with no
 // way for you to ever find out.
 async function logClientError(message, stack, context) {
+  if (degradedMode) return; // don't waste backup server capacity on error logs
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/client_errors`, {
+    await sbFetch(`/rest/v1/client_errors`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify({ username: myUsername || null, message: String(message).slice(0, 500), stack: stack ? String(stack).slice(0, 2000) : null, context: context || null })
     });
   } catch(e) { /* never let error logging itself throw */ }
@@ -513,9 +591,8 @@ window.addEventListener('unhandledrejection', (e) => {
 
 async function checkScheduledBroadcasts() {
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/scheduled_broadcasts?shown=eq.false&show_at=lte.${new Date().toISOString()}&select=*`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/scheduled_broadcasts?shown=eq.false&show_at=lte.${new Date().toISOString()}&select=*`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) return;
     const rows = await res.json();
@@ -524,9 +601,9 @@ async function checkScheduledBroadcasts() {
     // don't repeat for this or other users once their time has passed.
     showBroadcastBanner(rows[rows.length - 1].message);
     const ids = rows.map(r => r.id);
-    fetch(`${SUPABASE_URL}/rest/v1/scheduled_broadcasts?id=in.(${ids.join(',')})`, {
+    sbFetch(`/rest/v1/scheduled_broadcasts?id=in.(${ids.join(',')})`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify({ shown: true })
     }).catch(() => {});
   } catch(e) {}
@@ -638,7 +715,7 @@ async function startApp() {
   trackEvent('session_start', { device: myDeviceId || 'unknown' });
   await loadStickers();
   await registerDevice();
-  if (SUPABASE_URL && SUPABASE_KEY) {
+  if (SUPABASE_URL() && SUPABASE_KEY()) {
     setInterval(pollMessages, POLL_INTERVAL);
     setInterval(checkinDevice, DEVICE_CHECKIN_INTERVAL);
     checkinDevice();
@@ -1205,14 +1282,14 @@ function updateAnalyticsToggleUI() {
 
 // Core fire-and-forget event logger — drops silently if consent not given
 async function trackEvent(event, meta = {}) {
-  if (!analyticsEnabled || !myUsername) return;
+  if (!analyticsEnabled || !myUsername || degradedMode) return;
   try {
-    fetch(`${SUPABASE_URL}/rest/v1/analytics_events`, {
+    sbFetch(`/rest/v1/analytics_events`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'apikey': SUPABASE_KEY(),
+        'Authorization': `Bearer ${SUPABASE_KEY()}`,
         'Prefer': 'return=minimal'
       },
       body: JSON.stringify({ username: myUsername, event, meta })
@@ -1283,9 +1360,8 @@ if (myPremiumExpiry && new Date(myPremiumExpiry) > new Date()) {
 async function checkPremiumStatus() {
   if (!myUsername) return;
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/subscriptions?username=eq.${encodeURIComponent(myUsername)}&select=tier,expires_at`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/subscriptions?username=eq.${encodeURIComponent(myUsername)}&select=tier,expires_at`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) return;
     const rows = await res.json();
@@ -1473,9 +1549,9 @@ async function purchasePremium(tier) {
   btn.disabled = true; btn.textContent = 'Processing...';
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/purchase_subscription`, {
+    const res = await sbFetch(`/rest/v1/rpc/purchase_subscription`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` },
       body: JSON.stringify({ p_username: myUsername, p_tier: tier })
     });
     const result = await res.json();
@@ -1519,9 +1595,8 @@ async function loadFollowingFeed(query) {
   const resultsEl = document.getElementById('study-results');
   resultsEl.innerHTML = `<div class="study-empty-note">Loading...</div>`;
   try {
-    const followRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/study_follows?follower=eq.${encodeURIComponent(myUsername)}&select=followee`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const followRes = await sbFetch(`/rest/v1/study_follows?follower=eq.${encodeURIComponent(myUsername)}&select=followee`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     const followed = followRes.ok ? (await followRes.json()).map(r => r.followee) : [];
 
@@ -1531,9 +1606,8 @@ async function loadFollowingFeed(query) {
     }
 
     const followedFilter = followed.map(u => `username.eq.${encodeURIComponent(u)}`).join(',');
-    const notesRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/study_notes?or=(${followedFilter})&select=*&order=created_at.desc`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const notesRes = await sbFetch(`/rest/v1/study_notes?or=(${followedFilter})&select=*&order=created_at.desc`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     let notes = notesRes.ok ? await notesRes.json() : [];
     if (query) {
@@ -1578,9 +1652,9 @@ async function loadStudyNotes(query) {
   const combinedQuery = [query, subjectFilter, classFilter].filter(Boolean).join(' ').trim();
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_study_notes`, {
+    const res = await sbFetch(`/rest/v1/rpc/search_study_notes`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` },
       body: JSON.stringify({ query: combinedQuery, limit_count: 40 })
     });
     if (!res.ok) { resultsEl.innerHTML = `<div class="study-empty-note">Search failed — try again</div>`; return; }
@@ -1730,9 +1804,8 @@ async function setupFollowButton(username) {
   if (!btn) return;
   let isFollowing = false;
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/study_follows?follower=eq.${encodeURIComponent(myUsername)}&followee=eq.${encodeURIComponent(username)}&select=follower`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/study_follows?follower=eq.${encodeURIComponent(myUsername)}&followee=eq.${encodeURIComponent(username)}&select=follower`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     const rows = res.ok ? await res.json() : [];
     isFollowing = rows.length > 0;
@@ -1743,14 +1816,14 @@ async function setupFollowButton(username) {
     btn.disabled = true;
     try {
       if (isFollowing) {
-        await fetch(`${SUPABASE_URL}/rest/v1/study_follows?follower=eq.${encodeURIComponent(myUsername)}&followee=eq.${encodeURIComponent(username)}`, {
-          method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        await sbFetch(`/rest/v1/study_follows?follower=eq.${encodeURIComponent(myUsername)}&followee=eq.${encodeURIComponent(username)}`, {
+          method: 'DELETE', headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
         });
         isFollowing = false;
       } else {
-        await fetch(`${SUPABASE_URL}/rest/v1/study_follows`, {
+        await sbFetch(`/rest/v1/study_follows`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
           body: JSON.stringify({ follower: myUsername, followee: username })
         });
         isFollowing = true;
@@ -1775,9 +1848,8 @@ async function setupLikeButton(noteId) {
   let liked = false;
   let count = 0;
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/study_note_likes?note_id=eq.${noteId}&select=username`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/study_note_likes?note_id=eq.${noteId}&select=username`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     const rows = res.ok ? await res.json() : [];
     count = rows.length;
@@ -1789,14 +1861,14 @@ async function setupLikeButton(noteId) {
     btn.disabled = true;
     try {
       if (liked) {
-        await fetch(`${SUPABASE_URL}/rest/v1/study_note_likes?note_id=eq.${noteId}&username=eq.${encodeURIComponent(myUsername)}`, {
-          method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        await sbFetch(`/rest/v1/study_note_likes?note_id=eq.${noteId}&username=eq.${encodeURIComponent(myUsername)}`, {
+          method: 'DELETE', headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
         });
         liked = false; count--;
       } else {
-        await fetch(`${SUPABASE_URL}/rest/v1/study_note_likes`, {
+        await sbFetch(`/rest/v1/study_note_likes`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
           body: JSON.stringify({ note_id: noteId, username: myUsername })
         });
         liked = true; count++;
@@ -1820,9 +1892,8 @@ async function loadQAThread(noteId) {
   threadEl.innerHTML = `<div class="study-qa-loading">Loading questions...</div>`;
 
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/study_note_qa?note_id=eq.${noteId}&select=*&order=created_at.asc`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/study_note_qa?note_id=eq.${noteId}&select=*&order=created_at.asc`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     const rows = res.ok ? await res.json() : [];
     const questions = rows.filter(r => !r.parent_id);
@@ -1894,9 +1965,9 @@ async function submitQuestion(noteId) {
   const sendBtn = document.getElementById('study-qa-send');
   sendBtn.disabled = true;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/study_note_qa`, {
+    const res = await sbFetch(`/rest/v1/study_note_qa`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify({ note_id: noteId, username: myUsername, text })
     });
     if (!res.ok) { toast('Failed to post question'); sendBtn.disabled = false; return; }
@@ -1912,9 +1983,9 @@ async function submitAnswer(noteId, parentId, inputEl) {
   if (!text) return;
   const isAuthor = activeStudyNote && activeStudyNote.username === myUsername;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/study_note_qa`, {
+    const res = await sbFetch(`/rest/v1/study_note_qa`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify({ note_id: noteId, parent_id: parentId, username: myUsername, text, is_author: isAuthor })
     });
     if (!res.ok) { toast('Failed to post answer'); return; }
@@ -1942,9 +2013,9 @@ async function loadRecommendations(note) {
   const el = document.getElementById('study-recommendations');
   if (!el) return;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/search_study_notes`, {
+    const res = await sbFetch(`/rest/v1/rpc/search_study_notes`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` },
       body: JSON.stringify({ query: `${note.subject} ${note.class_code}`, limit_count: 6 })
     });
     if (!res.ok) return;
@@ -1971,9 +2042,9 @@ async function loadRecommendations(note) {
 async function deleteStudyNote(noteId, onDeleted) {
   if (!confirm('Delete this note? This cannot be undone.')) return;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/study_notes?id=eq.${noteId}&username=eq.${encodeURIComponent(myUsername)}`, {
+    const res = await sbFetch(`/rest/v1/study_notes?id=eq.${noteId}&username=eq.${encodeURIComponent(myUsername)}`, {
       method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
     });
     if (!res.ok) { toast('Failed to delete note'); return; }
     toast('Note deleted');
@@ -1995,9 +2066,8 @@ async function loadMyNotes() {
   const resultsEl = document.getElementById('study-mynotes-results');
   resultsEl.innerHTML = `<div class="study-empty-note">Loading...</div>`;
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/study_notes?username=eq.${encodeURIComponent(myUsername)}&select=*&order=created_at.desc`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/study_notes?username=eq.${encodeURIComponent(myUsername)}&select=*&order=created_at.desc`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     const notes = res.ok ? await res.json() : [];
     if (!notes.length) {
@@ -2098,9 +2168,9 @@ async function submitStudyNote() {
       deadline, expires_at: expiresAt.toISOString()
     };
     console.log('[submitStudyNote] mode:', studyUploadMode, 'file present:', !!studyUploadFile, 'file_data length:', studyUploadFile?.length, 'file_type:', studyUploadFileType);
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/study_notes`, {
+    const res = await sbFetch(`/rest/v1/study_notes`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify(payload)
     });
     if (!res.ok) {
@@ -3618,10 +3688,57 @@ function addSystemMessage(chatCode, text) {
 // ─── SEND ─────────────────────────────────────────────────────────────────────
 function generateMsgId() { return 'msg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
+function checkSpamCooldown() {
+  const now = Date.now();
+  // Drop timestamps older than the cooldown window
+  spamMsgTimes = spamMsgTimes.filter(t => now - t < SPAM_COOLDOWN);
+  if (spamMsgTimes.length >= SPAM_THRESHOLD) {
+    // Already in cooldown — return ms remaining
+    const earliest = spamMsgTimes[0];
+    return SPAM_COOLDOWN - (now - earliest);
+  }
+  return 0; // clear to send
+}
+
+function startSpamCooldownUI(msLeft) {
+  const btn = document.getElementById('send-btn');
+  if (!btn) return;
+  if (spamCooldownTimer) clearInterval(spamCooldownTimer);
+  btn.disabled = true;
+  const tick = () => {
+    const remaining = checkSpamCooldown();
+    if (remaining <= 0) {
+      clearInterval(spamCooldownTimer);
+      spamCooldownTimer = null;
+      btn.disabled = false;
+      btn.title = '';
+      // Restore send icon
+      btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
+    } else {
+      const secs = Math.ceil(remaining / 1000);
+      btn.innerHTML = `<span style="font-size:13px;font-weight:700;line-height:1;">${secs}</span>`;
+      btn.title = `Slow down — ${secs}s`;
+    }
+  };
+  tick();
+  spamCooldownTimer = setInterval(tick, 250);
+}
+
 async function sendMessage() {
   const input = document.getElementById('msg-input');
   const text  = input.value.trim();
   if (!text || !activeCode) return;
+
+  // Spam protection — skip for Blink AI chat
+  if (activeCode !== 'blinkai') {
+    const cooldownMs = checkSpamCooldown();
+    if (cooldownMs > 0) {
+      startSpamCooldownUI(cooldownMs);
+      toast(`⏳ Slow down — wait ${Math.ceil(cooldownMs/1000)}s`);
+      return;
+    }
+  }
+
   const type = isImageUrl(text) ? 'image' : 'text';
   const msgId = generateMsgId();
   const replyTo = buildReplyToPayload();
@@ -3643,6 +3760,7 @@ async function sendMessage() {
       addMessageToChat(activeCode, { msgId, text, time: Date.now(), sent: true, read: true, type, replyTo });
       await pushToSupabase(activeCode, text, type, { msgId, replyTo: replyTo ? JSON.stringify(replyTo) : null });
     }
+    spamMsgTimes.push(Date.now());
     trackMessageSent(type);
     input.value = ''; input.style.height = 'auto';
     document.getElementById('send-btn').disabled = true;
@@ -3658,10 +3776,14 @@ async function sendMessage() {
     addMessageToChat(activeCode, { msgId, text, time: Date.now(), sent: true, read: true, type, replyTo });
     await pushToSupabase(activeCode, text, type, { msgId, replyTo: replyTo ? JSON.stringify(replyTo) : null });
   }
+  spamMsgTimes.push(Date.now());
   trackMessageSent(type);
   input.value = ''; input.style.height = 'auto';
   document.getElementById('send-btn').disabled = true;
   clearReplyTarget();
+  // Start cooldown UI if threshold just hit
+  const cooldownMs = checkSpamCooldown();
+  if (cooldownMs > 0) startSpamCooldownUI(cooldownMs);
 }
 
 // Builds the small replyTo snapshot attached to the next outgoing message,
@@ -3720,10 +3842,11 @@ function joinGroup(invite) {
 const STATS_CONTENT_TYPES = ['text', 'image', 'voice', 'sticker', 'file', 'snap'];
 
 async function incrementDailyStat(statName, amount = 1) {
+  if (degradedMode) return;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_daily_stat`, {
+    await sbFetch(`/rest/v1/rpc/increment_daily_stat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` },
       body: JSON.stringify({ stat_name: statName, by_amount: amount })
     });
   } catch(e) { /* stats are best-effort, never block on failure */ }
@@ -3741,10 +3864,11 @@ function trackMessageSent(type) {
 // All-time per-user message count, used for the admin leaderboard. Separate
 // from daily_stats since this needs to persist indefinitely, not reset daily.
 async function incrementUserTotal() {
+  if (degradedMode) return;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/rpc/increment_user_total`, {
+    await sbFetch(`/rest/v1/rpc/increment_user_total`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` },
       body: JSON.stringify({ p_username: myUsername })
     });
   } catch(e) {}
@@ -3774,9 +3898,8 @@ async function getDevicesForUsername(username) {
   const cached = deviceListCache.get(username);
   if (cached && (Date.now() - cached.fetchedAt) < DEVICE_CACHE_MS) return cached.devices;
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/devices?username=eq.${encodeURIComponent(username)}&select=device_id`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/devices?username=eq.${encodeURIComponent(username)}&select=device_id`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
@@ -3804,8 +3927,8 @@ async function resolveDeliveryAddresses(username) {
 
 async function pushToSupabase(toCode, text, type = 'text', extra = {}) {
   try {
-    const check = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?select=id&limit=1`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'count=exact' } });
+    const check = await sbFetch(`/rest/v1/${TABLE}?select=id&limit=1`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'count=exact' } });
     const count = parseInt(check.headers.get('content-range')?.split('/')[1] || '0');
     if (count > SERVER_LIMIT) { toast('Server busy — try again shortly'); return; }
 
@@ -3837,9 +3960,9 @@ async function pushToSupabase(toCode, text, type = 'text', extra = {}) {
       });
     }
 
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
+    const res = await sbFetch(`/rest/v1/${TABLE}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify(rows)
     });
     if (!res.ok) {
@@ -3855,9 +3978,9 @@ async function pushToSupabase(toCode, text, type = 'text', extra = {}) {
 // always addressed to a specific bare username or deviceId directly.
 async function pushRaw(fromId, toCode, text, type, extra = {}) {
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
+    await sbFetch(`/rest/v1/${TABLE}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify({ from: fromId, to: toCode, text, type, created_at: new Date().toISOString(), ...extra })
     });
   } catch(e) {}
@@ -3865,8 +3988,8 @@ async function pushRaw(fromId, toCode, text, type, extra = {}) {
 
 async function pollRaw(forId) {
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?to=eq.${encodeURIComponent(forId)}&select=*`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+    const res = await sbFetch(`/rest/v1/${TABLE}?to=eq.${encodeURIComponent(forId)}&select=*`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } });
     if (!res.ok) return [];
     return await res.json();
   } catch(e) { return []; }
@@ -3875,8 +3998,8 @@ async function pollRaw(forId) {
 async function deleteMessageIds(ids) {
   if (!ids.length) return;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?id=in.(${ids.join(',')})`, {
-      method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    await sbFetch(`/rest/v1/${TABLE}?id=in.(${ids.join(',')})`, {
+      method: 'DELETE', headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` }
     });
   } catch(e) {}
 }
@@ -3893,10 +4016,10 @@ async function pollMessages() {
     //     own targetDeviceId so only the intended device acts on them.
     const myAddress = `${myUsername}#${myDeviceId}`;
     const [ownRes, sharedRes] = await Promise.all([
-      fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?to=eq.${encodeURIComponent(myAddress)}&select=*`,
-        { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }),
-      fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?to=eq.${encodeURIComponent(myUsername)}&select=*`,
-        { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } })
+      sbFetch(`/rest/v1/${TABLE}?to=eq.${encodeURIComponent(myAddress)}&select=*`,
+        { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }),
+      sbFetch(`/rest/v1/${TABLE}?to=eq.${encodeURIComponent(myUsername)}&select=*`,
+        { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } })
     ]);
 
     const ownRows    = ownRes.ok ? await ownRes.json() : [];
@@ -4353,6 +4476,7 @@ function showStickerMenu(bubbleEl, bwrap, url) {
 }
 
 function sendStickerMsg(s) {
+  if (degradedMode) { toast('⚠️ Stickers paused — backup server active'); closeAllPanels(); return; }
   analyticsOnFeature('sticker');
   if (!activeCode) return;
   const msgId = generateMsgId();
@@ -4567,9 +4691,9 @@ async function sendInlineAIMessage(userText, replyToMsgId) {
   renderMessages(chat, type);
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/blinkai`, {
+    const res = await primaryFetch(`/functions/v1/blinkai`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_KEY()}` },
       body: JSON.stringify({
         messages: [
           { role: 'system', content: BLINKAI_SYSTEM },
@@ -4639,11 +4763,11 @@ async function sendBlinkAIMessage(text) {
       .slice(-20)
       .map(m => ({ role: m.sent ? 'user' : 'assistant', content: m.text }));
 
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/blinkai`, {
+    const res = await primaryFetch(`/functions/v1/blinkai`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_KEY}`
+        'Authorization': `Bearer ${SUPABASE_KEY()}`
       },
       body: JSON.stringify({
         messages: [
@@ -4697,12 +4821,12 @@ async function saveTimetable() {
   if (!myUsername) return;
   try {
     console.log('[tt] saving for', myUsername, 'schedule:', JSON.stringify(myTimetable));
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/timetables`, {
+    const res = await sbFetch(`/rest/v1/timetables`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'apikey': SUPABASE_KEY(),
+        'Authorization': `Bearer ${SUPABASE_KEY()}`,
         'Prefer': 'resolution=merge-duplicates,return=minimal'
       },
       body: JSON.stringify({ username: myUsername, schedule: myTimetable, updated_at: new Date().toISOString() })
@@ -4719,9 +4843,8 @@ async function saveTimetable() {
 async function fetchMyTimetable() {
   if (!myUsername) return;
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/timetables?username=eq.${encodeURIComponent(myUsername)}&select=schedule`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/timetables?username=eq.${encodeURIComponent(myUsername)}&select=schedule`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) return;
     const rows = await res.json();
@@ -4737,9 +4860,8 @@ async function fetchContactTimetables() {
   const usernames = contacts.map(c => c.code);
   const inList = usernames.join(',');
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/timetables?username=in.(${inList})&select=username,schedule`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    const res = await sbFetch(`/rest/v1/timetables?username=in.(${inList})&select=username,schedule`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
     if (!res.ok) { console.warn('fetchContactTimetables HTTP', res.status); return; }
     const rows = await res.json();
@@ -4927,11 +5049,11 @@ document.getElementById('tt-upload-send').addEventListener('click', async () => 
     const mimeMatch = ttScreenshotBase64.match(/^data:([^;]+);/);
     const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
 
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/blinkaitimetable`, {
+    const res = await primaryFetch(`/functions/v1/blinkaitimetable`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_KEY}`
+        'Authorization': `Bearer ${SUPABASE_KEY()}`
       },
       body: JSON.stringify({ image: base64, mime })
     });
@@ -5013,6 +5135,25 @@ document.getElementById('analytics-toggle').addEventListener('change', e => {
   toast(e.target.checked ? 'Usage analytics enabled' : 'Usage analytics disabled');
 });
 
+// Degraded mode retry — try to switch back to primary server
+document.getElementById('degraded-retry').addEventListener('click', async () => {
+  toast('Checking main server…');
+  try {
+    const res = await fetch(SERVERS[0].url + '/rest/v1/usernames?select=username&limit=1', {
+      headers: { 'apikey': SERVERS[0].key, 'Authorization': `Bearer ${SERVERS[0].key}` },
+      signal: AbortSignal.timeout(4000)
+    });
+    if (res.ok || res.status < 500) {
+      activeServerIdx = 0;
+      setDegradedMode(false);
+    } else {
+      toast('Main server still busy — staying on backup');
+    }
+  } catch(e) {
+    toast('Main server still unreachable');
+  }
+});
+
 document.getElementById('settings-feedback-btn').addEventListener('click', () => {
   document.getElementById('settings-overlay').classList.remove('open');
   document.getElementById('feedback-text').value = '';
@@ -5027,9 +5168,9 @@ document.getElementById('feedback-send').addEventListener('click', async () => {
   const btn = document.getElementById('feedback-send');
   btn.disabled = true; btn.textContent = 'Sending...';
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/feedback_reports`, {
+    await sbFetch(`/rest/v1/feedback_reports`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
       body: JSON.stringify({ username: myUsername, message: text })
     });
     document.getElementById('feedback-modal').classList.remove('open');
@@ -5352,8 +5493,8 @@ function formatBP(n) {
 async function fetchPayBalance() {
   if (!myUsername) return;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/balances?username=eq.${encodeURIComponent(myUsername)}&select=amount`,
-      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } });
+    const res = await sbFetch(`/rest/v1/balances?username=eq.${encodeURIComponent(myUsername)}&select=amount`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } });
     if (!res.ok) return;
     const rows = await res.json();
     const label = document.getElementById('pay-balance-label');
@@ -5636,6 +5777,7 @@ document.getElementById('ai-mode-cancel').addEventListener('click', () => {
 document.getElementById('image-file-input').addEventListener('change', async e=>{
   const file=e.target.files[0];e.target.value='';
   if(!file||!activeCode)return;
+  if(degradedMode){ toast('⚠️ Images paused — backup server active'); return; }
   toast('Compressing...');
   try{
     const base64=await compressImage(file);
