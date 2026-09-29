@@ -5,10 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Blink</title>
 <link rel="stylesheet" href="blink.css">
-<script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
-<script nomodule src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
+<script nomodule src="https://cdn.jsdelivr.net/npm/ionicons@7.1.0/dist/ionicons/ionicons.js"></script>
 </head>
 <body>
+
+<!-- DEGRADED MODE BANNER -->
+<div id="degraded-banner" style="display:none;">
+  <ion-icon name="cloud-offline-outline"></ion-icon>
+  <span>Backup server active — text only, images paused</span>
+  <button id="degraded-retry">Retry main</button>
+</div>
 
 <!-- WELCOME SCREEN -->
 <div id="welcome-screen" style="display:none">
@@ -463,9 +470,9 @@
 
         <!-- AI mode pill — replaces input wrap while AI mode is active -->
         <div id="ai-mode-bar" style="display:none;">
-          <img src="blinkai.png" style="width:15px;height:15px;border-radius:50%;object-fit:cover;">
-          <span>Asking Blink AI</span>
-          <button id="ai-mode-cancel">✕</button>
+          <button id="ai-mode-cancel" title="Turn off AI mode">
+            <img src="blinkai.png" style="width:20px;height:20px;border-radius:50%;object-fit:cover;display:block;">
+          </button>
         </div>
 
         <!-- Recording UI — replaces input wrap while recording -->
