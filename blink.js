@@ -671,7 +671,6 @@ async function completeLinking(username) {
 }
 
 async function startApp() {
-  document.getElementById('my-username-display').textContent = myUsername;
   contacts       = JSON.parse(ls('contacts')       || '[]');
   chats          = JSON.parse(ls('chats')          || '{}');
   groups         = JSON.parse(ls('groups')         || '[]');
@@ -738,7 +737,6 @@ async function setUsername(newUsername, isFirstTime = false) {
   const oldUsername = myUsername;
   myUsername = newUsername;
   ls('myUsername', myUsername);
-  document.getElementById('my-username-display').textContent = myUsername;
   if (!isFirstTime && oldUsername) {
     const payload = JSON.stringify({ oldCode: oldUsername, newCode: newUsername, username: newUsername });
     const promises = contacts.map(c => pushToSupabase(c.code, payload, 'code_change'));
@@ -1447,26 +1445,26 @@ function buildAccentSwatches() {
 
 function updatePremiumUI() {
   const banner = document.getElementById('premium-banner');
-  if (!banner) return;
   const isMax = myPremiumTier === 'max';
   const isPro = isPremiumActive();
+
+  updatePremiumBadgeInSettings();
 
   if (!isPro) {
     const ttBanner = document.getElementById('timetable-banner');
     const ttBannerVisible = ttBanner && ttBanner.style.display !== 'none';
-    if (!sessionStorage.getItem('premiumBannerDismissed') && !ttBannerVisible) banner.style.display = 'flex';
+    if (banner && !sessionStorage.getItem('premiumBannerDismissed') && !ttBannerVisible) banner.style.display = 'flex';
     document.getElementById('settings-row-receipts')?.classList.add('premium-locked');
     document.getElementById('settings-row-badge')?.classList.add('premium-locked');
     document.getElementById('settings-row-theme')?.classList.add('premium-locked');
     document.getElementById('settings-row-accent')?.classList.add('premium-locked');
   } else {
-    banner.style.display = 'none';
+    if (banner) banner.style.display = 'none';
     document.getElementById('settings-row-receipts')?.classList.remove('premium-locked');
     document.getElementById('settings-row-badge')?.classList.remove('premium-locked');
     // Theme and accent only for Max
     document.getElementById('settings-row-theme')?.classList.toggle('premium-locked', !isMax);
     document.getElementById('settings-row-accent')?.classList.toggle('premium-locked', !isMax);
-    updatePremiumBadgeInSettings();
     updateReceiptToggleUI();
     updateBadgePreviewUI();
     buildAccentSwatches();
@@ -1478,9 +1476,9 @@ function updatePremiumUI() {
 function updatePremiumBadgeInSettings() {
   const sub = document.getElementById('premium-sub-text');
   if (!sub) return;
-  if (myPremiumTier) {
+  if (myPremiumTier && isPremiumActive()) {
     const daysLeft = Math.ceil((myPremiumExpiry - Date.now()) / 86400000);
-    sub.innerHTML = `<span style="color:#fff;font-weight:600;">${myPremiumTier === 'max' ? 'Max' : 'Pro'} — ${daysLeft}d left</span>`;
+    sub.innerHTML = `<span style="color:#fff;font-weight:600;">${myPremiumTier === 'max' ? 'Max' : 'Pro'} · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} left</span>`;
   } else {
     sub.textContent = 'Unlock PRO & MAX features';
   }
@@ -3037,7 +3035,6 @@ function toggleEditMode() {
   selectedContacts.clear();
   document.getElementById('edit-btn').classList.toggle('active', editMode);
   document.getElementById('edit-action-bar').classList.toggle('open', editMode);
-  document.getElementById('my-code-bar').style.display = editMode ? 'none' : '';
   renderContacts(document.getElementById('search').value);
   updateEditActions();
 }
@@ -3057,6 +3054,7 @@ function updateEditActions() {
 
 // ─── OPEN DM ──────────────────────────────────────────────────────────────────
 function openChat(code) {
+  closeSearch();
   if (activeCode && activeCode !== code) analyticsOnChatClose(activeCode);
   exitAiMode();
   activeCode = code; activeType = 'dm';
@@ -3087,6 +3085,7 @@ function openChat(code) {
 
 // ─── OPEN GROUP ───────────────────────────────────────────────────────────────
 function openGroup(groupId) {
+  closeSearch();
   activeCode = groupId; activeType = 'group';
   const group = groups.find(g => g.id === groupId);
   if (!group) return;
@@ -3751,22 +3750,26 @@ async function sendMessage() {
     return;
   }
 
-  // Inline AI mode — send message normally then get AI reply
+  // Inline AI mode — show message locally, wait for AI, then push both to Supabase
   if (inlineAiMode) {
     exitAiMode();
-    if (activeType === 'group') {
-      await sendGroupMessage(text, type, { msgId, replyTo });
-    } else {
-      addMessageToChat(activeCode, { msgId, text, time: Date.now(), sent: true, read: true, type, replyTo });
-      await pushToSupabase(activeCode, text, type, { msgId, replyTo: replyTo ? JSON.stringify(replyTo) : null });
-    }
+    const capturedCode = activeCode;
+    const capturedType = activeType;
+    // Show message locally immediately (not yet sent to Supabase)
+    addMessageToChat(capturedCode, { msgId, text, time: Date.now(), sent: true, read: true, type, replyTo });
+    renderMessages(capturedCode, capturedType);
     spamMsgTimes.push(Date.now());
     trackMessageSent(type);
     input.value = ''; input.style.height = 'auto';
     document.getElementById('send-btn').disabled = true;
     clearReplyTarget();
-    // Now get AI reply inline
+    // Wait for AI reply, then push user message to Supabase
     await sendInlineAIMessage(text, msgId);
+    if (capturedType === 'group') {
+      await sendGroupMessage(text, type, { msgId, replyTo });
+    } else {
+      await pushToSupabase(capturedCode, text, type, { msgId, replyTo: replyTo ? JSON.stringify(replyTo) : null });
+    }
     return;
   }
 
@@ -5213,11 +5216,48 @@ document.getElementById('story-text-input').addEventListener('keydown', e => {
 
 window.addEventListener('resize', () => { if (document.getElementById('story-editor').classList.contains('open')) renderEditorCanvas(); });
 
-// Blink Camera (Snap-style one-time photos)
-document.getElementById('blink-camera-btn-small').addEventListener('click', openBlinkCamera);
-document.getElementById('blink-camera-close').addEventListener('click', closeBlinkCamera);
-document.getElementById('blink-camera-flip').addEventListener('click', flipCamera);
-document.getElementById('blink-camera-shutter').addEventListener('click', captureSnapPhoto);
+// Search toggle
+function openSearch() {
+  const wrap = document.getElementById('search-wrap');
+  const header = document.getElementById('sidebar-header');
+  wrap.style.top = header.offsetHeight + 'px';
+  wrap.style.display = 'flex';
+  document.getElementById('stories-bar').style.display = 'none';
+  const pb = document.getElementById('premium-banner');
+  const tb = document.getElementById('timetable-banner');
+  if (pb) pb.dataset.searchHidden = pb.style.display !== 'none' ? '1' : '0', pb.style.display = 'none';
+  if (tb) tb.dataset.searchHidden = tb.style.display !== 'none' ? '1' : '0', tb.style.display = 'none';
+  requestAnimationFrame(() => {
+    document.getElementById('contacts-list').style.paddingTop = wrap.offsetHeight + 'px';
+  });
+  document.getElementById('search').focus();
+}
+function closeSearch() {
+  const wrap = document.getElementById('search-wrap');
+  if (wrap.style.display === 'none') return;
+  wrap.style.display = 'none';
+  document.getElementById('search').value = '';
+  document.getElementById('stories-bar').style.display = '';
+  const pb = document.getElementById('premium-banner');
+  const tb = document.getElementById('timetable-banner');
+  if (pb && pb.dataset.searchHidden === '1') pb.style.display = '';
+  if (tb && tb.dataset.searchHidden === '1') tb.style.display = '';
+  document.getElementById('contacts-list').style.paddingTop = '';
+  renderContacts('');
+}
+document.getElementById('search-toggle-btn').addEventListener('click', () => {
+  const visible = document.getElementById('search-wrap').style.display !== 'none';
+  visible ? closeSearch() : openSearch();
+});
+document.getElementById('search').addEventListener('blur', () => {
+  // small delay so click on a contact registers first
+  setTimeout(() => {
+    if (document.getElementById('search').value === '') closeSearch();
+  }, 200);
+});
+document.getElementById('search').addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeSearch();
+});
 
 // Study Notes
 // Study button is now a plain <a href="study.html"> — no JS listener needed
@@ -5272,8 +5312,6 @@ document.getElementById('study-detail-delete').addEventListener('click', () => {
 document.getElementById('study-mynotes-btn').addEventListener('click', openMyNotesView);
 document.getElementById('study-mynotes-back').addEventListener('click', closeMyNotesView);
 
-document.getElementById('blink-camera-retake').addEventListener('click', retakeSnap);
-document.getElementById('blink-camera-send-btn').addEventListener('click', openSnapSendToPicker);
 
 document.getElementById('snap-sendto-cancel').addEventListener('click', () => document.getElementById('snap-sendto-modal').classList.remove('open'));
 document.getElementById('snap-sendto-modal').addEventListener('click', e => { if (e.target === document.getElementById('snap-sendto-modal')) document.getElementById('snap-sendto-modal').classList.remove('open'); });
@@ -5608,10 +5646,6 @@ document.getElementById('username-confirm').addEventListener('click', async () =
 });
 document.getElementById('username-input').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('username-confirm').click(); });
 
-// Code bar
-document.getElementById('my-code-bar').addEventListener('click', () => {
-  navigator.clipboard?.writeText(myUsername).then(()=>toast('@'+myUsername+' copied!')).catch(()=>toast('@'+myUsername));
-});
 
 // Edit mode
 document.getElementById('edit-btn').addEventListener('click', toggleEditMode);
@@ -5658,24 +5692,63 @@ document.getElementById('new-contact-btn').addEventListener('click', (e) => {
 });
 document.getElementById('new-contact-menu-contact').addEventListener('click', () => {
   newContactMenu.classList.remove('open');
-  document.getElementById('contact-name-input').value=''; document.getElementById('contact-code-input').value='';
-  document.getElementById('modal').classList.add('open'); document.getElementById('contact-name-input').focus();
+  document.getElementById('contact-name-input').value='';
+  document.getElementById('contact-code-input').value='';
+  document.getElementById('contact-step-1').style.display='';
+  document.getElementById('contact-step-2').style.display='none';
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('contact-code-input').focus();
 });
 document.getElementById('new-contact-menu-group').addEventListener('click', () => {
   newContactMenu.classList.remove('open');
   document.getElementById('new-group-btn').click();
 });
+document.getElementById('new-contact-menu-copy').addEventListener('click', () => {
+  newContactMenu.classList.remove('open');
+  navigator.clipboard?.writeText(myUsername).then(() => toast('@' + myUsername + ' copied!')).catch(() => toast('@' + myUsername));
+});
 document.addEventListener('click', () => newContactMenu.classList.remove('open'));
-document.getElementById('modal-cancel').addEventListener('click', ()=>document.getElementById('modal').classList.remove('open'));
-document.getElementById('modal').addEventListener('click', e=>{if(e.target===document.getElementById('modal'))document.getElementById('modal').classList.remove('open');});
+function closeContactModal() {
+  document.getElementById('modal').classList.remove('open');
+  document.getElementById('contact-step-1').style.display='';
+  document.getElementById('contact-step-2').style.display='none';
+}
+document.getElementById('modal-cancel').addEventListener('click', closeContactModal);
+document.getElementById('modal').addEventListener('click', e=>{if(e.target===document.getElementById('modal'))closeContactModal();});
+
+// Step 1 → Step 2
+document.getElementById('modal-next').addEventListener('click', () => {
+  const code = document.getElementById('contact-code-input').value.trim().toLowerCase();
+  if(!code){toast('Enter a username');return;}
+  if(myUsername && code===myUsername){toast("That's your own username");return;}
+  if(Array.isArray(contacts) && contacts.find(c=>c.code===code)){toast('Contact already added');return;}
+  // Pre-fill name with their username so user can just hit Add if they want
+  if(!document.getElementById('contact-name-input').value.trim()) {
+    document.getElementById('contact-name-input').value = code;
+  }
+  document.getElementById('contact-step-1').style.display='none';
+  document.getElementById('contact-step-2').style.display='';
+  const ni = document.getElementById('contact-name-input');
+  ni.focus(); ni.select();
+});
+document.getElementById('contact-code-input').addEventListener('keydown', e=>{if(e.key==='Enter')document.getElementById('modal-next').click();});
+document.getElementById('contact-name-input').addEventListener('keydown', e=>{if(e.key==='Enter')document.getElementById('modal-add').click();});
+
+// Step 2 → Back
+document.getElementById('modal-back').addEventListener('click', () => {
+  document.getElementById('contact-step-1').style.display='';
+  document.getElementById('contact-step-2').style.display='none';
+  document.getElementById('contact-code-input').focus();
+});
+
 document.getElementById('modal-add').addEventListener('click', () => {
   const name=document.getElementById('contact-name-input').value.trim();
-  const code=document.getElementById('contact-code-input').value.trim();
+  const code=document.getElementById('contact-code-input').value.trim().toLowerCase();
   if(!name||!code){toast('Fill in both fields');return;}
   if(code===myUsername){toast("That's your own username");return;}
   if(contacts.find(c=>c.code===code)){toast('Contact already exists');return;}
   contacts.push({name,code,lastModified:Date.now()}); saveContacts(); renderContacts();
-  document.getElementById('modal').classList.remove('open');
+  closeContactModal();
   toast(`${name} added`); openChat(code);
   pushContactUpdateToDevices(contacts[contacts.length - 1]);
 });
@@ -5950,4 +6023,4 @@ sendBtn.addEventListener('click', () => {
 document.getElementById('mic-btn').style.display = 'flex';
 document.getElementById('send-btn').style.display = 'none';
 
-init();
+init(); 
