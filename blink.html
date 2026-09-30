@@ -25,7 +25,7 @@
     </div>
     <h1>Welcome to Blink</h1>
     <p>Choose a username. This is your address — share it so people can message you.</p>
-    <input type="text" id="welcome-input" placeholder="e.g. alex" maxlength="24" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <input type="text" id="welcome-input" placeholder="username" maxlength="24" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     <div id="welcome-hint">No spaces. Letters, numbers and _ only.</div>
     <button id="welcome-btn">Get Started</button>
     <button id="welcome-connect-link">Connect to an existing account</button>
@@ -89,12 +89,13 @@
     <div id="sidebar-header">
       <h1>Blink</h1>
       <div style="display:flex;gap:6px;align-items:center;">
-        <!-- Blink Pay balance chip -->
-        <a href="pay.html" id="pay-balance-btn" title="Blink Pay">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-          <span id="pay-balance-label">BP —</span>
+        <!-- Search + Wallet + Edit + Settings buttons -->
+        <button id="search-toggle-btn" title="Search" class="header-icon-btn">
+          <ion-icon name="search-outline" style="font-size:20px;"></ion-icon>
+        </button>
+        <a href="pay.html" title="Blink Pay" class="header-icon-btn" style="display:flex;align-items:center;justify-content:center;text-decoration:none;">
+          <ion-icon name="wallet-outline" style="font-size:20px;"></ion-icon>
         </a>
-        <!-- Edit + Settings buttons -->
         <button id="edit-btn" title="Edit" class="header-icon-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
@@ -125,20 +126,8 @@
       <div id="stories-list"></div>
     </div>
 
-    <div id="search-wrap">
-      <input id="search" type="text" placeholder="Search">
-      <button id="blink-camera-btn-small" title="Blink it">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-          <circle cx="12" cy="13" r="4"/>
-        </svg>
-      </button>
-    </div>
-
-    <div id="my-code-bar" title="Tap to copy your username">
-      <span>You</span>
-      <span class="code-val">@<span id="my-username-display">—</span></span>
-      <span class="copy-hint">Copy</span>
+    <div id="search-wrap" style="display:none; padding: 4px 12px 10px;">
+      <input id="search" type="text" placeholder="Search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     </div>
 
     <!-- TIMETABLE SETUP BANNER -->
@@ -184,6 +173,10 @@
           <button id="new-contact-menu-group">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             New Group
+          </button>
+          <button id="new-contact-menu-copy">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy my username
           </button>
         </div>
       </div>
@@ -275,6 +268,13 @@
 
     <!-- ACTIONS SECTION -->
     <div class="settings-section">
+      <a href="pay.html" class="settings-row" style="text-decoration:none;">
+        <div>
+          <div class="settings-label" style="display:flex;align-items:center;gap:7px;"><ion-icon name="card-outline" style="color:#30d158;font-size:16px;"></ion-icon> Blink Pay</div>
+          <div class="settings-label-sub">Balance: <span id="pay-balance-label" style="color:#fff;font-weight:600;">BP —</span></div>
+        </div>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" style="color:var(--text-secondary);flex-shrink:0;"><polyline points="9 18 15 12 9 6"/></svg>
+      </a>
       <button class="settings-row" id="settings-premium-btn" style="width:100%;border:none;cursor:pointer;background:none;font-family:inherit;text-align:left;">
         <div>
           <div class="settings-label" style="display:flex;align-items:center;gap:7px;"><ion-icon name="flash" style="color:#FFD600;font-size:16px;"></ion-icon> Blink Premium</div>
@@ -548,11 +548,22 @@
 <div class="modal-overlay" id="modal">
   <div class="modal">
     <h2>New Contact</h2>
-    <div><label>Name</label><input type="text" id="contact-name-input" placeholder="e.g. Sarah"></div>
-    <div><label>Their username</label><input type="text" id="contact-code-input" placeholder="e.g. sarah_92" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
-    <div class="modal-actions">
-      <button class="btn-cancel" id="modal-cancel">Cancel</button>
-      <button class="btn-add"    id="modal-add">Add</button>
+    <!-- Step 1: username -->
+    <div id="contact-step-1">
+      <div><label>Their username</label><input type="text" id="contact-code-input" placeholder="username" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="modal-actions">
+        <button class="btn-cancel" id="modal-cancel">Cancel</button>
+        <button type="button" class="btn-add" id="modal-next">Next</button>
+      </div>
+    </div>
+    <!-- Step 2: display name -->
+    <div id="contact-step-2" style="display:none;">
+      <p style="color:#8e8e93;font-size:13px;margin-bottom:12px;">What do you want to call them?</p>
+      <div><label>Name</label><input type="text" id="contact-name-input" placeholder="e.g. Sarah"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" id="modal-back">Back</button>
+        <button type="button" class="btn-add"    id="modal-add">Add</button>
+      </div>
     </div>
   </div>
 </div>
@@ -774,38 +785,6 @@
 </div>
 
 
-<div id="blink-camera-overlay">
-  <div id="blink-camera-frame">
-    <video id="blink-camera-video" autoplay playsinline muted></video>
-    <canvas id="blink-camera-canvas" style="display:none;"></canvas>
-    <img id="blink-camera-preview" style="display:none;">
-
-    <div id="blink-camera-top">
-      <button id="blink-camera-close">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-      <button id="blink-camera-flip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-      </button>
-    </div>
-
-    <div id="blink-camera-reply-label" style="display:none;"></div>
-
-    <div id="blink-camera-bottom">
-      <button id="blink-camera-shutter"><div id="blink-camera-shutter-inner"></div></button>
-    </div>
-
-    <div id="blink-camera-preview-bottom">
-      <button id="blink-camera-retake">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        Retake
-      </button>
-      <button id="blink-camera-send-btn">
-        Send <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4l8 16-8-4-8 4 8-16z"/></svg>
-      </button>
-    </div>
-  </div>
-</div>
 
 <!-- SEND-TO PICKER (after taking a photo) -->
 <div class="modal-overlay" id="snap-sendto-modal">
