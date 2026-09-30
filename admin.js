@@ -195,6 +195,37 @@ document.getElementById('broadcast-save').addEventListener('click', () => {
   setConfig('broadcast_message', val);
 });
 
+// ─── FORCE RELOAD ─────────────────────────────────────────────────────────────
+document.getElementById('force-reload-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('force-reload-btn');
+  const status = document.getElementById('force-reload-status');
+  if (!confirm('This will force every user to hard-reload the app on their next visit. Continue?')) return;
+  btn.disabled = true;
+  btn.textContent = 'Pushing…';
+  status.textContent = '';
+  const newVer = Date.now().toString();
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_config`, {
+      method: 'POST',
+      headers: { ...headers, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ key: 'force_reload_version', value: newVer, updated_at: new Date().toISOString() })
+    });
+    if (res.ok) {
+      status.style.color = '#4ade80';
+      status.textContent = `✓ Done — version ${newVer} pushed. Users will reload on next app open.`;
+    } else {
+      const err = await res.text().catch(() => '');
+      status.style.color = '#ff453a';
+      status.textContent = 'Failed: ' + err;
+    }
+  } catch(e) {
+    status.style.color = '#ff453a';
+    status.textContent = 'Failed: ' + e.message;
+  }
+  btn.textContent = '⟲ Force Reload for All Users';
+  btn.disabled = false;
+});
+
 // ─── USERNAME BLACKLIST ───────────────────────────────────────────────────────
 async function loadBlacklist() {
   const list = document.getElementById('blacklist-list');
