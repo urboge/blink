@@ -322,7 +322,16 @@ body {
 }
 
 
-#search-wrap { padding: 4px 12px 10px; display: flex; gap: 8px; align-items: center; }
+#search-wrap {
+  position: absolute; left: 0; right: 0;
+  top: 0; /* set by JS to sidebar-header height */
+  z-index: 20;
+  background: var(--sidebar-bg);
+  padding: 10px 12px;
+  display: flex; gap: 8px; align-items: center;
+  animation: fadeScale 0.15s ease;
+  border-bottom: 1px solid var(--divider);
+}
 #search {
   flex: 1; width: auto; background: var(--search-bg);
   border: 1px solid var(--divider); border-radius: 12px;
@@ -331,15 +340,6 @@ body {
 }
 #search:focus { border-color: rgba(255,255,255,0.2); }
 #search::placeholder { color: var(--text-secondary); }
-#blink-camera-btn-small {
-  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
-  background: var(--search-bg); border: 1px solid var(--divider);
-  display: flex; align-items: center; justify-content: center; cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
-}
-#blink-camera-btn-small:hover { background: var(--contact-active); }
-#blink-camera-btn-small:active { transform: scale(0.92); }
-#blink-camera-btn-small svg { width: 15px; height: 15px; color: var(--accent); }
 
 #my-code-bar { margin: 0 12px 10px; background: var(--search-bg); border: 1px solid var(--divider); border-radius: 12px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; transition: background 0.15s; }
 #my-code-bar:hover { background: var(--contact-hover); }
@@ -1338,10 +1338,14 @@ body.light-mode .settings-section > button.settings-row:hover {
 
 /* NEW CONTACT BUTTON */
 #study-btn-wrap {
-  margin: 8px 14px 14px;
+  margin: 0 14px 14px;
+  padding-top: 12px;
   flex-shrink: 0;
   display: flex; justify-content: flex-end;
+  background: linear-gradient(to bottom, transparent, var(--sidebar-bg) 40%);
+  pointer-events: none;
 }
+#study-btn-wrap > * { pointer-events: auto; }
 
 #new-contact-wrap {
   position: relative;
