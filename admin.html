@@ -91,6 +91,16 @@
   }
   #broadcast-save:hover { background: #1d4ed8; }
 
+  /* FORCE RELOAD */
+  #force-reload-btn {
+    margin-top: 8px; background: #ff9f0a; border: none; border-radius: 10px;
+    padding: 9px 16px; color: #000; font-size: 13px; font-weight: 700;
+    cursor: pointer; font-family: inherit;
+  }
+  #force-reload-btn:hover { background: #e6900a; }
+  #force-reload-btn:disabled { opacity: 0.6; cursor: default; }
+  #force-reload-status { margin-top: 8px; font-size: 13px; color: #8e8e93; min-height: 18px; }
+
   #blacklist-add-row { display: flex; gap: 8px; margin-top: 8px; }
   #blacklist-username-input, #blacklist-reason-input {
     flex: 1; background: #2c2c2e; border: 1px solid #38383a;
@@ -271,6 +281,13 @@
     <div class="config-desc">Shown to all users as a banner in the app. Leave empty to hide.</div>
     <input type="text" id="broadcast-input" placeholder="e.g. Scheduled maintenance tonight at 10pm">
     <button id="broadcast-save">Save Broadcast</button>
+  </section>
+
+  <section>
+    <h2>Force App Reload</h2>
+    <div class="config-desc">Bumps a version token in app_config. Every user's app detects the change on their next load and hard-reloads once — useful when browsers have cached an old version of Blink.</div>
+    <button id="force-reload-btn">⟲ Force Reload for All Users</button>
+    <div id="force-reload-status"></div>
   </section>
 
   <section>
