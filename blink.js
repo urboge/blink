@@ -622,6 +622,16 @@ async function init() {
   if (config.maintenance_mode === 'true') { showMaintenanceScreen(); return; }
   if (config.broadcast_message) showBroadcastBanner(config.broadcast_message);
   window._signupsDisabled = config.disable_signups === 'true';
+
+  // Force-reload check: if admin bumped the version, hard-reload once
+  if (config.force_reload_version) {
+    const seenVer = localStorage.getItem('blink_reload_ver');
+    if (seenVer !== config.force_reload_version) {
+      localStorage.setItem('blink_reload_ver', config.force_reload_version);
+      window.location.reload(true);
+      return;
+    }
+  }
   checkScheduledBroadcasts();
 
   myUsername = ls('myUsername') || '';
@@ -6023,4 +6033,4 @@ sendBtn.addEventListener('click', () => {
 document.getElementById('mic-btn').style.display = 'flex';
 document.getElementById('send-btn').style.display = 'none';
 
-init(); 
+init();
