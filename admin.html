@@ -18,12 +18,12 @@
   }
   #gate h1 { font-size: 22px; font-weight: 700; }
   #gate p { color: #8e8e93; font-size: 13px; text-align: center; max-width: 320px; line-height: 1.5; }
-  #gate-input {
+  #gate-input, #gate-username, #gate-new-password, #gate-confirm-password {
     width: 280px; background: #1c1c1e; border: 1px solid #38383a;
     border-radius: 10px; padding: 12px 14px; color: #fff; font-size: 15px;
     text-align: center; outline: none;
   }
-  #gate-input:focus { border-color: #2563eb; }
+  #gate-input:focus, #gate-username:focus, #gate-new-password:focus, #gate-confirm-password:focus { border-color: #2563eb; }
   #gate-btn {
     width: 280px; padding: 12px; background: #2563eb; border: none;
     border-radius: 10px; color: #fff; font-size: 15px; font-weight: 600;
@@ -245,10 +245,17 @@
 <!-- LOGIN GATE -->
 <div id="gate">
   <h1>🔒 Blink Admin</h1>
-  <p>This is a basic client-side password gate, not real authentication — it keeps casual visitors out, but isn't a substitute for real access control.</p>
+  <p>Sign in with the Blink administrator account. Access is verified by Supabase and database policies.</p>
+  <input type="text" id="gate-username" placeholder="Admin username" autocomplete="username" autocapitalize="off" spellcheck="false">
   <input type="password" id="gate-input" placeholder="Password" autocomplete="current-password">
-  <button id="gate-btn">Enter</button>
+  <button id="gate-btn">Sign in</button>
   <div id="gate-error"></div>
+  <div id="gate-password-change" style="display:none;flex-direction:column;align-items:center;gap:12px;">
+    <p>Your temporary admin password must be replaced before the dashboard opens.</p>
+    <input type="password" id="gate-new-password" placeholder="New password (4+ characters)" minlength="4" autocomplete="new-password">
+    <input type="password" id="gate-confirm-password" placeholder="Confirm new password" minlength="4" autocomplete="new-password">
+    <button id="gate-change-btn">Set new password</button>
+  </div>
 </div>
 
 <!-- DASHBOARD -->
@@ -374,6 +381,7 @@
   </section>
 </div>
 
+<script src="blink-auth.js"></script>
 <script src="admin.js"></script>
 </body>
 </html>
