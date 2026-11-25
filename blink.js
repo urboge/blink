@@ -3259,10 +3259,10 @@ function renderMessages(code, type = 'dm') {
       bubble.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
     } else if (m.isAiReply) {
       bubble.className = 'bubble ai-reply-bubble';
-      bubble.innerHTML = `<div class="ai-reply-label"><img src="blinkai.png" style="width:12px;height:12px;border-radius:50%;object-fit:cover;"> Blink AI</div>${escHtml(m.text)}`;
+      bubble.innerHTML = `<div class="ai-reply-label"><img src="blinkai.png" style="width:12px;height:12px;border-radius:50%;object-fit:cover;"> Blink AI</div>${linkifyText(m.text)}`;
     } else {
       bubble.className = 'bubble';
-      bubble.innerHTML = escHtml(m.text);
+      bubble.innerHTML = linkifyText(m.text);
     }
     if (m.reactions && m.reactions.length) {
       const badge = document.createElement('div');
@@ -4564,6 +4564,23 @@ function formatDateLabel(d) {
   return d.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'});
 }
 function escHtml(t) { if(!t) return ''; return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+function linkifyText(text) {
+  if (!text) return '';
+  const urlPattern = /(?:https?:\/\/|www\.)[^\s<>\"']+/gi;
+  let html = '';
+  let lastIndex = 0;
+  for (const match of String(text).matchAll(urlPattern)) {
+    let url = match[0];
+    let trailing = '';
+    while (/[.,!?;:)]$/.test(url)) { trailing = url.slice(-1) + trailing; url = url.slice(0, -1); }
+    if (!url) continue;
+    html += escHtml(String(text).slice(lastIndex, match.index));
+    const href = url.startsWith('www.') ? `https://${url}` : url;
+    html += `<a class="message-link" href="${escHtml(href)}" target="_blank" rel="noopener noreferrer">${escHtml(url)}</a>${escHtml(trailing)}`;
+    lastIndex = match.index + match[0].length;
+  }
+  return html + escHtml(String(text).slice(lastIndex));
+}
 function toast(msg) {
   const el=document.getElementById('toast');
   el.textContent=msg; el.classList.add('show');
