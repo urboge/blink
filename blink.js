@@ -711,6 +711,7 @@ async function startApp() {
   }
   streaks        = JSON.parse(ls('streaks')        || '{}');
   notificationsOn = ls('notificationsOn') !== 'false';
+  await ensurePayWallet(myUsername);
   updateMyAvatarUI();
   cleanExpiredImages();
   cleanExpiredStories();
@@ -5599,6 +5600,32 @@ async function fetchPayBalance() {
     const label = document.getElementById('pay-balance-label');
     if (label) label.textContent = rows.length ? `BP ${formatBP(rows[0].amount)}` : 'BP —';
   } catch(e) {}
+}
+
+// Initialize the wallet as part of account startup, not only when Blink Pay
+// is opened. Ignore duplicates so a retry can never reset an existing balance.
+async function ensurePayWallet(username) {
+  if (!username) return false;
+  try {
+    const res = await sbFetch('/rest/v1/balances', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY(),
+        'Authorization': `Bearer ${SUPABASE_KEY()}`,
+        'Prefer': 'resolution=ignore-duplicates,return=minimal'
+      },
+      body: JSON.stringify({ username, amount: 500 })
+    });
+    if (!res.ok) {
+      console.error('ensurePayWallet failed:', res.status, await res.text().catch(() => ''));
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('ensurePayWallet exception:', e);
+    return false;
+  }
 }
 
 document.getElementById('settings-btn').addEventListener('click', async () => {
