@@ -10,24 +10,6 @@ input, textarea, select {
   font-size: 16px !important;
 }
 
-/* DEGRADED MODE BANNER */
-#degraded-banner {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  background: #b45309; color: #fff;
-  font-size: 13px; font-weight: 500;
-  padding: 8px 16px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-}
-#degraded-banner ion-icon { font-size: 16px; flex-shrink: 0; }
-#degraded-retry {
-  margin-left: 8px; padding: 3px 10px;
-  background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4);
-  border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600;
-  cursor: pointer; font-family: inherit; white-space: nowrap;
-}
-#degraded-retry:hover { background: rgba(255,255,255,0.3); }
-
 /* WELCOME SCREEN */
 #welcome-screen {
   display: none; position: fixed; inset: 0; z-index: 998;
@@ -44,13 +26,13 @@ input, textarea, select {
 }
 #welcome-box h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
 #welcome-box p { font-size: 13px; color: var(--text-secondary); text-align: center; line-height: 1.5; }
-#welcome-input {
+#welcome-input, #welcome-password {
   width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--divider);
   border-radius: 14px; padding: 13px 16px; color: var(--text-primary);
   font-size: 16px; outline: none; font-family: inherit; text-align: center;
   transition: border-color 0.15s;
 }
-#welcome-input:focus { border-color: rgba(255,255,255,0.3); }
+#welcome-input:focus, #welcome-password:focus { border-color: rgba(255,255,255,0.3); }
 #welcome-hint { font-size: 12px; color: var(--text-secondary); transition: color 0.15s; }
 #welcome-btn {
   width: 100%; padding: 14px; background: var(--accent); border: none;
@@ -241,7 +223,7 @@ body.light-mode #accent-hex-input { color: #111114; }
 body.light-mode .system-msg { background: rgba(0,0,0,0.06); color: #6b6b72; }
 
 /* Welcome screen */
-body.light-mode #welcome-input { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.12); color: #111114; }
+body.light-mode #welcome-input, body.light-mode #welcome-password { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.12); color: #111114; }
 body.light-mode #welcome-btn { background: var(--accent); }
 body.light-mode #welcome-box h1 { color: #111114; }
 body.light-mode #welcome-box p { color: #6b6b72; }
