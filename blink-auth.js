@@ -3,7 +3,7 @@
 (function () {
   'use strict';
   const URL = 'https://gkrfiyalbjbgkjevmpod.supabase.co';
-  const KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmUiLCJyZWYiOiJna3JmaXlhbGJqYmdramV2bXBvZCIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzgxNjIwNDk5LCJleHAiOjIwOTcxOTY0OTl9.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
+  const KEY = 'sb_publishable_e-Adkvwj1gTVa_61L_K1PQ_PI-xG0Ra';
   const SESSION_KEY = 'blinkAuthSession';
   let refreshPromise = null;
 
