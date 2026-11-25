@@ -346,14 +346,16 @@
     document.getElementById('trigger-modal-close').addEventListener('click', () => modal.classList.remove('open'));
     modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('open'); });
 
+    let myUsername = localStorage.getItem('myUsername') || 'demo_user';
+
     try {
       const contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
       if (contacts.length > 0) {
         const container = document.getElementById('contacts-container');
         container.innerHTML = '';
         contacts.forEach(c => {
-          const name = c.username || c;
-          if (name && name !== myUsername) {
+          const name = typeof c === 'string' ? c : (c.code || c.username || '');
+          if (name && name.toLowerCase() !== myUsername.toLowerCase()) {
             const pill = document.createElement('div');
             pill.className = 'contact-pill';
             pill.textContent = `@${name}`;
@@ -366,8 +368,6 @@
 
     const SUPABASE_URL = 'https://gkrfiyalbjbgkjevmpod.supabase.co';
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrcmZpeWFsYmpiZ2tqZXZtcG9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjA0OTksImV4cCI6MjA5NzE5NjQ5OX0.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
-
-    let myUsername = localStorage.getItem('myUsername') || 'demo_user';
 
     const headers = {
       'apikey': SUPABASE_KEY,
