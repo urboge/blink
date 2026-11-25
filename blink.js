@@ -201,8 +201,12 @@ function saveStreaks()        { ls('streaks',        JSON.stringify(streaks)); }
 const STORY_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const MAX_STORY_BYTES = 120 * 1024;
 
+function normalizeUsername(name) {
+  return String(name ?? '').trim().toLowerCase();
+}
+
 function validateUsername(name) {
-  return /^[a-zA-Z0-9_]{1,24}$/.test(name);
+  return /^[a-z0-9_]{1,24}$/.test(normalizeUsername(name));
 }
 
 // ─── IMAGE EXPIRY ─────────────────────────────────────────────────────────────
@@ -257,6 +261,7 @@ async function compressImage(file, maxBytes = MAX_IMAGE_BYTES, maxDim = 1200, st
 
 // ─── USERNAME REGISTRY ────────────────────────────────────────────────────────
 async function isUsernameTaken(username) {
+  username = normalizeUsername(username);
   try {
     const res = await sbFetch(`/rest/v1/usernames?username=eq.${encodeURIComponent(username)}&select=username`,
       { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
@@ -267,6 +272,7 @@ async function isUsernameTaken(username) {
   } catch(e) { return false; }
 }
 async function registerUsername(username) {
+  username = normalizeUsername(username);
   try {
     await sbFetch(`/rest/v1/usernames`, {
       method: 'POST',
@@ -276,6 +282,7 @@ async function registerUsername(username) {
   } catch(e) {}
 }
 async function releaseUsername(username) {
+  username = normalizeUsername(username);
   try {
     await sbFetch(`/rest/v1/usernames?username=eq.${encodeURIComponent(username)}`, {
       method: 'DELETE',
@@ -634,7 +641,8 @@ async function init() {
   }
   checkScheduledBroadcasts();
 
-  myUsername = ls('myUsername') || '';
+  myUsername = normalizeUsername(ls('myUsername') || '');
+  if (myUsername) ls('myUsername', myUsername);
   myDeviceId = getOrCreateDeviceId();
   const oldCode = ls('myCode');
   if (oldCode && !myUsername) ls('myCode', '');
@@ -671,7 +679,7 @@ function handleLinkingPollMessage(r) {
 
 async function completeLinking(username) {
   stopLinkingPoll();
-  myUsername = username;
+  myUsername = normalizeUsername(username);
   ls('myUsername', myUsername);
   document.getElementById('link-modal').classList.remove('open');
   document.getElementById('welcome-screen').style.display = 'none';
@@ -683,7 +691,37 @@ async function completeLinking(username) {
 async function startApp() {
   contacts       = JSON.parse(ls('contacts')       || '[]');
   chats          = JSON.parse(ls('chats')          || '{}');
+  const contactCodeMap = new Map(contacts.filter(c => c?.code).map(c => [c.code, normalizeUsername(c.code)]));
+  let contactsChanged = false;
+  contacts = contacts.map(c => {
+    if (!c?.code || c.code === normalizeUsername(c.code)) return c;
+    contactsChanged = true;
+    return { ...c, code: normalizeUsername(c.code) };
+  });
+  const normalizedChats = {};
+  let chatsChanged = false;
+  Object.entries(chats).forEach(([code, messages]) => {
+    const normalizedCode = contactCodeMap.get(code) || code;
+    if (normalizedCode !== code) chatsChanged = true;
+    normalizedChats[normalizedCode] = [...(normalizedChats[normalizedCode] || []), ...(Array.isArray(messages) ? messages : [])];
+  });
+  if (chatsChanged) {
+    Object.values(normalizedChats).forEach(messages => messages.sort((a, b) => (a.time || 0) - (b.time || 0)));
+    chats = normalizedChats;
+    saveChats();
+  }
+  if (contactsChanged) saveContacts();
   groups         = JSON.parse(ls('groups')         || '[]');
+  let groupsChanged = false;
+  groups = groups.map(g => ({
+    ...g,
+    members: Array.isArray(g.members) ? g.members.map(m => {
+      if (!m?.code || m.code === normalizeUsername(m.code)) return m;
+      groupsChanged = true;
+      return { ...m, code: normalizeUsername(m.code) };
+    }) : g.members
+  }));
+  if (groupsChanged) saveGroups();
   favStickers    = JSON.parse(ls('favStickers')    || '[]');
   customStickers = JSON.parse(ls('customStickers') || '[]');
   avatars        = JSON.parse(ls('avatars')        || '{}');
@@ -745,6 +783,7 @@ async function startApp() {
 
 // ─── SET USERNAME ─────────────────────────────────────────────────────────────
 async function setUsername(newUsername, isFirstTime = false) {
+  newUsername = normalizeUsername(newUsername);
   const oldUsername = myUsername;
   myUsername = newUsername;
   ls('myUsername', myUsername);
@@ -4648,7 +4687,7 @@ document.getElementById('welcome-btn').addEventListener('click', async () => {
     document.getElementById('welcome-hint').textContent = 'New signups are temporarily disabled.';
     return;
   }
-  const val = document.getElementById('welcome-input').value.trim();
+  const val = normalizeUsername(document.getElementById('welcome-input').value);
   if (!validateUsername(val)) {
     document.getElementById('welcome-hint').style.color = '#ff453a';
     document.getElementById('welcome-hint').textContent = 'Letters, numbers and _ only. No spaces.';
@@ -4704,7 +4743,7 @@ document.getElementById('link-cancel-2').addEventListener('click', () => documen
 document.getElementById('link-modal').addEventListener('click', e => { if (e.target === document.getElementById('link-modal')) document.getElementById('link-modal').classList.remove('open'); });
 
 document.getElementById('link-send-request').addEventListener('click', async () => {
-  const target = document.getElementById('link-username-input').value.trim();
+  const target = normalizeUsername(document.getElementById('link-username-input').value);
   if (!validateUsername(target)) { toast('Enter a valid username'); return; }
   const btn = document.getElementById('link-send-request');
   btn.disabled = true; btn.textContent = 'Sending...';
@@ -5712,7 +5751,7 @@ document.getElementById('settings-change-username').addEventListener('click', ()
 document.getElementById('username-cancel').addEventListener('click', () => document.getElementById('username-modal').classList.remove('open'));
 document.getElementById('username-modal').addEventListener('click', e => { if(e.target===document.getElementById('username-modal')) document.getElementById('username-modal').classList.remove('open'); });
 document.getElementById('username-confirm').addEventListener('click', async () => {
-  const val = document.getElementById('username-input').value.trim();
+  const val = normalizeUsername(document.getElementById('username-input').value);
   if (!validateUsername(val)) { toast('Invalid — letters, numbers and _ only'); return; }
   if (val===myUsername) { document.getElementById('username-modal').classList.remove('open'); return; }
 
@@ -5806,7 +5845,7 @@ document.getElementById('modal').addEventListener('click', e=>{if(e.target===doc
 
 // Step 1 → Step 2
 document.getElementById('modal-next').addEventListener('click', () => {
-  const code = document.getElementById('contact-code-input').value.trim().toLowerCase();
+  const code = normalizeUsername(document.getElementById('contact-code-input').value);
   if(!code){toast('Enter a username');return;}
   if(myUsername && code===myUsername){toast("That's your own username");return;}
   if(Array.isArray(contacts) && contacts.find(c=>c.code===code)){toast('Contact already added');return;}
@@ -5831,7 +5870,7 @@ document.getElementById('modal-back').addEventListener('click', () => {
 
 document.getElementById('modal-add').addEventListener('click', () => {
   const name=document.getElementById('contact-name-input').value.trim();
-  const code=document.getElementById('contact-code-input').value.trim().toLowerCase();
+  const code=normalizeUsername(document.getElementById('contact-code-input').value);
   if(!name||!code){toast('Fill in both fields');return;}
   if(code===myUsername){toast("That's your own username");return;}
   if(contacts.find(c=>c.code===code)){toast('Contact already exists');return;}
