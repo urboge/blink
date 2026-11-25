@@ -1,72 +1,82 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://gkrfiyalbjbgkjevmpod.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrcmZpeWFsYmpiZ2tqZXZtcG9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjA0OTksImV4cCI6MjA5NzE5NjQ5OX0.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
-
-// SHA-256 hash of the shared admin password — keeps the plaintext out of the
-// page source, but this is still a client-side check, not real security.
-// Default password is "Blink5323". To change it, hash a new password in any
-// console with: crypto.subtle.digest('SHA-256', new TextEncoder().encode('newpw'))
-//   .then(b => console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('')))
-const ADMIN_PASSWORD_HASH = 'ef8f2109e60c363ed869e954bc3b2650ec921b0d9a90cb4b9f76b87cb670f92b';
-
-// Blink accounts allowed to access this page, checked directly against
-// Blink's own localStorage (admin.html must be hosted in the same
-// folder/origin as blink.html for this to see the same storage). The error
-// message deliberately never reveals that this check exists or what it
-// requires — wrong password and wrong account both show the same generic
-// "incorrect password" message.
-const ALLOWED_USERNAMES = ['timurs', 'test'];
-
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmUiLCJyZWYiOiJna3JmaXlhbGJqYmdramV2bXBvZCIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzgxNjIwNDk5LCJleHAiOjIwOTcxOTY0OTl9.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
 const headers = {
   'apikey': SUPABASE_KEY,
   'Authorization': `Bearer ${SUPABASE_KEY}`,
   'Content-Type': 'application/json'
 };
 
-async function sha256(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+// The dashboard is opened only when the signed-in Supabase user has an admin
+// row. RLS independently enforces this on every data request.
+let adminUsername = '';
+const gate = document.getElementById('gate');
+const gateError = document.getElementById('gate-error');
+const passwordChangePanel = document.getElementById('gate-password-change');
+function showPasswordChange() {
+  gateError.textContent = '';
+  document.getElementById('gate-btn').style.display = 'none';
+  passwordChangePanel.style.display = 'flex';
 }
-
-function isAllowedDevice() {
-  return ALLOWED_USERNAMES.includes(localStorage.getItem('myUsername'));
+function showDashboard() {
+  gate.style.display = 'none';
+  document.getElementById('dashboard').classList.add('open');
+  loadDashboard();
 }
-
-// ─── GATE (password + local account check) ────────────────────────────────────
+async function verifyAdmin() {
+  const account = await BlinkAuth.account();
+  const admin = await BlinkAuth.adminState();
+  if (!account?.username || !admin) return false;
+  adminUsername = account.username;
+  if (admin.must_change_password) showPasswordChange();
+  else showDashboard();
+  return true;
+}
 document.getElementById('gate-btn').addEventListener('click', tryEnter);
 document.getElementById('gate-input').addEventListener('keydown', e => { if (e.key === 'Enter') tryEnter(); });
-
+document.getElementById('gate-username').addEventListener('keydown', e => { if (e.key === 'Enter') tryEnter(); });
 async function tryEnter() {
-  const password = document.getElementById('gate-input').value;
-  const errorEl = document.getElementById('gate-error');
-  errorEl.textContent = '';
-
-  const hash = await sha256(password);
-  // Same generic message whether the password was wrong or the account
-  // isn't allowed — never hint that an account-based check exists at all.
-  if (hash !== ADMIN_PASSWORD_HASH || !isAllowedDevice()) {
-    errorEl.textContent = 'Incorrect password';
-    return;
+  gateError.textContent = '';
+  try {
+    const username = document.getElementById('gate-username').value.trim();
+    await BlinkAuth.signIn(username, document.getElementById('gate-input').value);
+    if (!(await verifyAdmin())) {
+      await BlinkAuth.signOut('local');
+      throw new Error('Username or password is incorrect.');
+    }
+  } catch (error) {
+    gateError.textContent = error.message || 'Username or password is incorrect.';
   }
-
-  sessionStorage.setItem('blinkAdminUnlocked', 'true');
-  document.getElementById('gate').style.display = 'none';
-  document.getElementById('dashboard').classList.add('open');
-  loadDashboard();
 }
-
-// Restore unlocked state if the page was refreshed within the same tab session
-if (sessionStorage.getItem('blinkAdminUnlocked') === 'true' && isAllowedDevice()) {
-  document.getElementById('gate').style.display = 'none';
-  document.getElementById('dashboard').classList.add('open');
-  loadDashboard();
+document.getElementById('gate-change-btn').addEventListener('click', async () => {
+  gateError.textContent = '';
+  const next = document.getElementById('gate-new-password').value;
+  const confirmNext = document.getElementById('gate-confirm-password').value;
+  if (Array.from(next).length < 4) { gateError.textContent = 'Password must be at least 4 characters.'; return; }
+  if (next !== confirmNext) { gateError.textContent = 'The passwords do not match.'; return; }
+  try {
+    await BlinkAuth.changePasswordAndSignOut(adminUsername, next);
+    const admin = await BlinkAuth.adminState();
+    if (!admin || admin.must_change_password) throw new Error('Password changed, but the admin password-change check did not clear. Contact the Blink administrator.');
+    passwordChangePanel.style.display = 'none';
+    showDashboard();
+  } catch (error) { gateError.textContent = error.message || 'Could not change password.'; }
+});
+async function restoreAdminSession() {
+  if (!(await BlinkAuth.currentSession())) return;
+  if (!(await verifyAdmin())) await BlinkAuth.signOut('local');
 }
-
-document.getElementById('logout-btn').addEventListener('click', () => {
-  sessionStorage.removeItem('blinkAdminUnlocked');
+restoreAdminSession();
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  await BlinkAuth.signOut('local');
+  adminUsername = '';
   document.getElementById('dashboard').classList.remove('open');
-  document.getElementById('gate').style.display = 'flex';
+  gate.style.display = 'flex';
+  document.getElementById('gate-btn').style.display = '';
+  passwordChangePanel.style.display = 'none';
   document.getElementById('gate-input').value = '';
+  document.getElementById('gate-new-password').value = '';
+  document.getElementById('gate-confirm-password').value = '';
 });
 
 // ─── DASHBOARD DATA ───────────────────────────────────────────────────────────
@@ -383,11 +393,12 @@ async function lookupUser() {
 async function forceSignOutDevice(deviceId, btn) {
   if (!confirm('Force this device to sign out? It will be logged out next time it checks in (within ~60 seconds).')) return;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/devices?device_id=eq.${encodeURIComponent(deviceId)}`, {
-      method: 'PATCH',
-      headers: { ...headers, 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ force_signed_out: true })
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/blink_admin_set_device_signout`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ p_device_id: deviceId, p_force_signed_out: true })
     });
+    if (!res.ok) throw new Error(await res.text().catch(() => 'Admin request failed'));
     btn.textContent = 'Pending sign-out';
     btn.disabled = true;
   } catch(e) { alert('Failed: ' + e.message); }
@@ -507,7 +518,7 @@ async function resolveFeedback(id) {
 async function loadScheduledBroadcasts() {
   const list = document.getElementById('scheduled-list');
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/scheduled_broadcasts?shown=eq.false&select=*&order=show_at.asc`, { headers });
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/scheduled_broadcasts?shown=eq.false&show_at=gt.${encodeURIComponent(new Date().toISOString())}&select=*&order=show_at.asc`, { headers });
     const rows = res.ok ? await res.json() : [];
     if (!rows.length) {
       list.innerHTML = `<div class="empty-note">No broadcasts scheduled.</div>`;
