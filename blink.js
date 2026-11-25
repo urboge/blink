@@ -261,15 +261,19 @@ async function compressImage(file, maxBytes = MAX_IMAGE_BYTES, maxDim = 1200, st
 
 // ─── USERNAME REGISTRY ────────────────────────────────────────────────────────
 async function isUsernameTaken(username) {
-  username = normalizeUsername(username);
+  const matches = await findRegisteredUsernames(username);
+  return matches.length > 0;
+}
+
+async function findRegisteredUsernames(username) {
+  const pattern = String(username ?? '').trim().replace(/[\\%_]/g, '\\$&');
   try {
-    const res = await sbFetch(`/rest/v1/usernames?username=eq.${encodeURIComponent(username)}&select=username`,
+    const res = await sbFetch(`/rest/v1/usernames?username=ilike.${encodeURIComponent(pattern)}&select=username&limit=3`,
       { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
-    if (!res.ok) return false;
-    const rows = await res.json();
-    return rows.length > 0;
-  } catch(e) { return false; }
+    if (!res.ok) return [];
+    return await res.json();
+  } catch(e) { return []; }
 }
 async function registerUsername(username) {
   username = normalizeUsername(username);
@@ -282,7 +286,6 @@ async function registerUsername(username) {
   } catch(e) {}
 }
 async function releaseUsername(username) {
-  username = normalizeUsername(username);
   try {
     await sbFetch(`/rest/v1/usernames?username=eq.${encodeURIComponent(username)}`, {
       method: 'DELETE',
@@ -641,8 +644,9 @@ async function init() {
   }
   checkScheduledBroadcasts();
 
-  myUsername = normalizeUsername(ls('myUsername') || '');
-  if (myUsername) ls('myUsername', myUsername);
+  // Keep the registry's original spelling for existing accounts. New names
+  // are normalized at signup/change time, but legacy names may still be mixed-case.
+  myUsername = (ls('myUsername') || '').trim();
   myDeviceId = getOrCreateDeviceId();
   const oldCode = ls('myCode');
   if (oldCode && !myUsername) ls('myCode', '');
@@ -679,7 +683,7 @@ function handleLinkingPollMessage(r) {
 
 async function completeLinking(username) {
   stopLinkingPoll();
-  myUsername = normalizeUsername(username);
+  myUsername = String(username ?? '').trim();
   ls('myUsername', myUsername);
   document.getElementById('link-modal').classList.remove('open');
   document.getElementById('welcome-screen').style.display = 'none';
@@ -691,37 +695,7 @@ async function completeLinking(username) {
 async function startApp() {
   contacts       = JSON.parse(ls('contacts')       || '[]');
   chats          = JSON.parse(ls('chats')          || '{}');
-  const contactCodeMap = new Map(contacts.filter(c => c?.code).map(c => [c.code, normalizeUsername(c.code)]));
-  let contactsChanged = false;
-  contacts = contacts.map(c => {
-    if (!c?.code || c.code === normalizeUsername(c.code)) return c;
-    contactsChanged = true;
-    return { ...c, code: normalizeUsername(c.code) };
-  });
-  const normalizedChats = {};
-  let chatsChanged = false;
-  Object.entries(chats).forEach(([code, messages]) => {
-    const normalizedCode = contactCodeMap.get(code) || code;
-    if (normalizedCode !== code) chatsChanged = true;
-    normalizedChats[normalizedCode] = [...(normalizedChats[normalizedCode] || []), ...(Array.isArray(messages) ? messages : [])];
-  });
-  if (chatsChanged) {
-    Object.values(normalizedChats).forEach(messages => messages.sort((a, b) => (a.time || 0) - (b.time || 0)));
-    chats = normalizedChats;
-    saveChats();
-  }
-  if (contactsChanged) saveContacts();
   groups         = JSON.parse(ls('groups')         || '[]');
-  let groupsChanged = false;
-  groups = groups.map(g => ({
-    ...g,
-    members: Array.isArray(g.members) ? g.members.map(m => {
-      if (!m?.code || m.code === normalizeUsername(m.code)) return m;
-      groupsChanged = true;
-      return { ...m, code: normalizeUsername(m.code) };
-    }) : g.members
-  }));
-  if (groupsChanged) saveGroups();
   favStickers    = JSON.parse(ls('favStickers')    || '[]');
   customStickers = JSON.parse(ls('customStickers') || '[]');
   avatars        = JSON.parse(ls('avatars')        || '{}');
@@ -4743,8 +4717,12 @@ document.getElementById('link-cancel-2').addEventListener('click', () => documen
 document.getElementById('link-modal').addEventListener('click', e => { if (e.target === document.getElementById('link-modal')) document.getElementById('link-modal').classList.remove('open'); });
 
 document.getElementById('link-send-request').addEventListener('click', async () => {
-  const target = normalizeUsername(document.getElementById('link-username-input').value);
-  if (!validateUsername(target)) { toast('Enter a valid username'); return; }
+  const entered = normalizeUsername(document.getElementById('link-username-input').value);
+  if (!validateUsername(entered)) { toast('Enter a valid username'); return; }
+  const matches = await findRegisteredUsernames(entered);
+  if (!matches.length) { toast('Username not found'); return; }
+  if (matches.length > 1) { toast('More than one account matches that username'); return; }
+  const target = matches[0].username;
   const btn = document.getElementById('link-send-request');
   btn.disabled = true; btn.textContent = 'Sending...';
   await sendLinkRequest(target, myDeviceId);
@@ -5845,18 +5823,25 @@ document.getElementById('modal').addEventListener('click', e=>{if(e.target===doc
 
 // Step 1 → Step 2
 document.getElementById('modal-next').addEventListener('click', () => {
-  const code = normalizeUsername(document.getElementById('contact-code-input').value);
-  if(!code){toast('Enter a username');return;}
-  if(myUsername && code===myUsername){toast("That's your own username");return;}
-  if(Array.isArray(contacts) && contacts.find(c=>c.code===code)){toast('Contact already added');return;}
-  // Pre-fill name with their username so user can just hit Add if they want
-  if(!document.getElementById('contact-name-input').value.trim()) {
-    document.getElementById('contact-name-input').value = code;
-  }
-  document.getElementById('contact-step-1').style.display='none';
-  document.getElementById('contact-step-2').style.display='';
-  const ni = document.getElementById('contact-name-input');
-  ni.focus(); ni.select();
+  (async () => {
+    const entered = normalizeUsername(document.getElementById('contact-code-input').value);
+    if(!entered){toast('Enter a username');return;}
+    if(!validateUsername(entered)){toast('Enter a valid username');return;}
+    const matches = await findRegisteredUsernames(entered);
+    if(matches.length > 1){toast('More than one account matches that username');return;}
+    const code = matches.length ? matches[0].username : entered;
+    if(myUsername && code.toLowerCase()===myUsername.toLowerCase()){toast("That's your own username");return;}
+    if(Array.isArray(contacts) && contacts.find(c=>String(c?.code || '').toLowerCase()===code.toLowerCase())){toast('Contact already added');return;}
+    // Use the registry spelling if this is a legacy mixed-case account.
+    document.getElementById('contact-code-input').value = code;
+    if(!document.getElementById('contact-name-input').value.trim()) {
+      document.getElementById('contact-name-input').value = code;
+    }
+    document.getElementById('contact-step-1').style.display='none';
+    document.getElementById('contact-step-2').style.display='';
+    const ni = document.getElementById('contact-name-input');
+    ni.focus(); ni.select();
+  })();
 });
 document.getElementById('contact-code-input').addEventListener('keydown', e=>{if(e.key==='Enter')document.getElementById('modal-next').click();});
 document.getElementById('contact-name-input').addEventListener('keydown', e=>{if(e.key==='Enter')document.getElementById('modal-add').click();});
@@ -5870,10 +5855,10 @@ document.getElementById('modal-back').addEventListener('click', () => {
 
 document.getElementById('modal-add').addEventListener('click', () => {
   const name=document.getElementById('contact-name-input').value.trim();
-  const code=normalizeUsername(document.getElementById('contact-code-input').value);
+  const code=document.getElementById('contact-code-input').value.trim();
   if(!name||!code){toast('Fill in both fields');return;}
-  if(code===myUsername){toast("That's your own username");return;}
-  if(contacts.find(c=>c.code===code)){toast('Contact already exists');return;}
+  if(code.toLowerCase()===myUsername.toLowerCase()){toast("That's your own username");return;}
+  if(contacts.find(c=>String(c?.code || '').toLowerCase()===code.toLowerCase())){toast('Contact already exists');return;}
   contacts.push({name,code,lastModified:Date.now()}); saveContacts(); renderContacts();
   closeContactModal();
   toast(`${name} added`); openChat(code);
