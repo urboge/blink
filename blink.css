@@ -2252,3 +2252,8 @@ body.light-mode .settings-section > button.settings-row:hover {
 body.light-mode #consent-banner { background: #ffffff; border-color: rgba(0,0,0,0.1); box-shadow: 0 8px 40px rgba(0,0,0,0.15); }
 body.light-mode #consent-decline { border-color: rgba(0,0,0,0.2); color: #6b6b72; }
 body.light-mode #consent-decline:hover { border-color: rgba(0,0,0,0.4); color: #111114; }
+
+/* Links in chat messages */
+.bubble .message-link { color: #4da3ff; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.msg-row.received .bubble .message-link { color: #087cff; }
+body.light-mode .msg-row.sent .bubble .message-link { color: #8fc5ff; }
