@@ -340,13 +340,14 @@
 
   <div id="toast-notif" class="toast">Success</div>
 
+  <script src="blink-auth.js"></script>
   <script>
     const modal = document.getElementById('send-modal');
     document.getElementById('trigger-modal-open').addEventListener('click', () => modal.classList.add('open'));
     document.getElementById('trigger-modal-close').addEventListener('click', () => modal.classList.remove('open'));
     modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('open'); });
 
-    let myUsername = localStorage.getItem('myUsername') || 'demo_user';
+    let myUsername = '';
 
     try {
       const contacts = JSON.parse(localStorage.getItem('contacts') || '[]');
@@ -395,9 +396,17 @@
     }
 
     async function initWallet() {
+      const account = await BlinkAuth.account();
+      if (!account?.username) {
+        showToast('Sign in to Blink first');
+        setTimeout(() => { window.location.href = 'blink.html'; }, 1200);
+        return;
+      }
+      myUsername = account.username;
       document.getElementById('user-badge').textContent = `@${myUsername}`;
       await fetchBalance();
       await fetchHistory();
+      setInterval(() => { fetchBalance(); fetchHistory(); }, 8000);
     }
 
     function setBalance(amount) {
@@ -522,7 +531,6 @@
     });
 
     initWallet();
-    setInterval(() => { fetchBalance(); fetchHistory(); }, 8000);
   </script>
 </body>
 </html>
