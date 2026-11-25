@@ -4,7 +4,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const hdrs = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
 
-const myUsername = localStorage.getItem('myUsername') || '';
+let myUsername = '';
 
 let activeNote = null;
 let activeTab  = 'browse';
@@ -15,12 +15,14 @@ let searchDebounce = null;
 let currentQuery = '';
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  if (!myUsername) {
+document.addEventListener('DOMContentLoaded', async () => {
+  const account = await BlinkAuth.account();
+  if (!account?.username) {
     toast('Log into Blink first');
     setTimeout(() => window.location.href = 'blink.html', 1500);
     return;
   }
+  myUsername = account.username;
   // Load landing suggestions immediately
   loadSuggestions('browse');
   bindEvents();
