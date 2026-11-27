@@ -10,6 +10,13 @@
 </head>
 <body>
 
+<!-- DEGRADED MODE BANNER -->
+<div id="degraded-banner" style="display:none;">
+  <ion-icon name="cloud-offline-outline"></ion-icon>
+  <span>Backup server active — text only, images paused</span>
+  <button id="degraded-retry">Retry main</button>
+</div>
+
 <!-- WELCOME SCREEN -->
 <div id="welcome-screen" style="display:none">
   <div id="welcome-box">
@@ -17,12 +24,11 @@
       <span style="font-size:32px;font-weight:900;color:#000;font-family:-apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:-1px;line-height:1;">B</span>
     </div>
     <h1>Welcome to Blink</h1>
-    <p id="welcome-description">Create a password to protect your username. Blink does not ask for an email or phone number.</p>
-    <input type="text" id="welcome-input" placeholder="username" maxlength="24" autocomplete="username" autocorrect="off" autocapitalize="off" spellcheck="false">
-    <input type="password" id="welcome-password" placeholder="Password (at least 4 characters)" minlength="4" autocomplete="new-password">
+    <p>Choose a username. This is your address — share it so people can message you.</p>
+    <input type="text" id="welcome-input" placeholder="username" maxlength="24" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     <div id="welcome-hint">No spaces. Letters, numbers and _ only.</div>
-    <button id="welcome-btn">Create account / set password</button>
-    <button id="welcome-connect-link">Already have a password? Sign in</button>
+    <button id="welcome-btn">Get Started</button>
+    <button id="welcome-connect-link">Connect to an existing account</button>
   </div>
 </div>
 
@@ -87,7 +93,7 @@
         <button id="search-toggle-btn" title="Search" class="header-icon-btn">
           <ion-icon name="search-outline" style="font-size:20px;"></ion-icon>
         </button>
-        <a href="pay.html" title="Blink Pay" class="header-icon-btn" style="display:flex;align-items:center;justify-content:center;text-decoration:none;">
+        <a href="pay.html" id="wallet-preview-trigger" title="Blink Pay" class="header-icon-btn" style="display:flex;align-items:center;justify-content:center;text-decoration:none;">
           <ion-icon name="wallet-outline" style="font-size:20px;"></ion-icon>
         </a>
         <button id="edit-btn" title="Edit" class="header-icon-btn">
@@ -208,16 +214,6 @@
           <button class="settings-mini-btn" id="settings-change-username">Change</button>
         </div>
       </div>
-      <div class="settings-row">
-        <div>
-          <div class="settings-label">Account security</div>
-          <div class="settings-label-sub">Change your password on this signed-in device</div>
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button class="settings-mini-btn" id="settings-change-password">Change password</button>
-          <button class="settings-mini-btn danger" id="settings-sign-out">Sign out</button>
-        </div>
-      </div>
       <div class="settings-row" id="settings-row-badge">
         <div>
           <div class="settings-label">Profile Emoji <span class="premium-tag">PRO</span></div>
@@ -295,8 +291,8 @@
       </button>
       <button class="settings-row" id="settings-sync-btn" style="width:100%;border:none;cursor:pointer;background:none;font-family:inherit;text-align:left;">
         <div>
-          <div class="settings-label" style="display:flex;align-items:center;gap:7px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Sign in on another device</div>
-          <div class="settings-label-sub">Use your username and password on that device</div>
+          <div class="settings-label" style="display:flex;align-items:center;gap:7px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Sync Devices</div>
+          <div class="settings-label-sub">Link another phone or browser</div>
         </div>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16" style="color:var(--text-secondary);flex-shrink:0;"><polyline points="9 18 15 12 9 6"/></svg>
       </button>
@@ -319,7 +315,7 @@
 
     <!-- DANGER ZONE -->
     <button class="settings-action-btn danger" id="settings-remove-story" style="display:none;">Remove My Story</button>
-    <button class="settings-action-btn danger" id="settings-remove-account" style="margin-top:8px;">Sign out and clear this device</button>
+    <button class="settings-action-btn danger" id="settings-remove-account" style="margin-top:8px;">Delete Account</button>
   </div>
 </div>
 
@@ -386,12 +382,12 @@
 <!-- REMOVE ACCOUNT WARNING MODAL -->
 <div class="modal-overlay" id="remove-account-modal">
   <div class="modal">
-    <h2 id="remove-account-title" style="color:#ff453a;">Sign out and clear this device?</h2>
-    <p id="remove-account-body" style="color:#8e8e93;font-size:14px;line-height:1.6;">This removes local Blink data and signs out this device. Your account and data on other devices remain.</p>
+    <h2 id="remove-account-title" style="color:#ff453a;">⚠️ Remove Account</h2>
+    <p id="remove-account-body" style="color:#8e8e93;font-size:14px;line-height:1.6;">This will permanently delete your username and erase all your messages, contacts, and data from this device. This cannot be undone.</p>
     <div id="remove-account-countdown" style="text-align:center;font-size:28px;font-weight:700;color:#ff453a;padding:8px 0;">3</div>
     <div class="modal-actions">
       <button class="btn-cancel" id="remove-account-cancel">Cancel</button>
-      <button class="btn-delete" id="remove-account-confirm" disabled style="opacity:0.4;">Sign out and clear</button>
+      <button class="btn-delete" id="remove-account-confirm" disabled style="opacity:0.4;">Delete Everything</button>
     </div>
   </div>
 </div>
@@ -527,21 +523,6 @@
     <div class="modal-actions">
       <button class="btn-cancel" id="username-cancel">Cancel</button>
       <button class="btn-add"    id="username-confirm">Save</button>
-    </div>
-  </div>
-</div>
-
-<!-- PASSWORD CHANGE MODAL -->
-<div class="modal-overlay" id="password-change-modal">
-  <div class="modal">
-    <h2>Change Password</h2>
-    <p style="color:#8e8e93;font-size:13px;line-height:1.5;">At least 4 characters. Other signed-in devices will be logged out after you save.</p>
-    <div><label>New password</label><input type="password" id="password-change-new" minlength="4" autocomplete="new-password"></div>
-    <div><label>Confirm new password</label><input type="password" id="password-change-confirm" minlength="4" autocomplete="new-password"></div>
-    <div id="password-change-error" style="color:#ff453a;font-size:12px;min-height:16px;"></div>
-    <div class="modal-actions">
-      <button class="btn-cancel" id="password-change-cancel">Cancel</button>
-      <button class="btn-add" id="password-change-save">Save password</button>
     </div>
   </div>
 </div>
@@ -921,7 +902,19 @@
     </div>
   </div>
 </div>
-<script src="blink-auth.js"></script>
+<!-- BLINK PAY PREVIEW WINDOW -->
+<div id="pay-preview-overlay" aria-hidden="true">
+  <section id="pay-preview-window" role="dialog" aria-modal="true" aria-labelledby="pay-preview-title">
+    <header id="pay-preview-header">
+      <h2 id="pay-preview-title">Blink Pay</h2>
+      <div id="pay-preview-header-actions">
+        <a id="pay-preview-open" href="pay.html">Open</a>
+        <button id="pay-preview-close" type="button" aria-label="Close Blink Pay preview">&times;</button>
+      </div>
+    </header>
+    <iframe id="pay-preview-frame" title="Blink Pay wallet" src="about:blank"></iframe>
+  </section>
+</div>
 <script src="blink.js"></script>
 </body>
 </html>
