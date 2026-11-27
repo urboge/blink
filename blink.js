@@ -1,36 +1,84 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const SUPABASE_PROJECT_URL = 'https://gkrfiyalbjbgkjevmpod.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmUiLCJyZWYiOiJna3JmaXlhbGJqYmdramV2bXBvZCIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzgxNjIwNDk5LCJleHAiOjIwOTcxOTY0OTl9.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY';
+const SERVERS = [
+  {
+    url: 'https://gkrfiyalbjbgkjevmpod.supabase.co',
+    key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdrcmZpeWFsYmpiZ2tqZXZtcG9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjA0OTksImV4cCI6MjA5NzE5NjQ5OX0.TXLwbzyyPcjJCGNnDKdHhA_4t1J4MD5FZHxQapEz4gY',
+    primary: true
+  },
+  {
+    url: 'https://zwkfywtsffwhceuhlrwaf.supabase.co',
+    key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3a2Z5d3RzZndoY2V1aGxyd2FmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA2OTAxNzEsImV4cCI6MjEwNjI2NjE3MX0.gbCOhb1jm480tZ6auIfvIb1OORIinWhXhTKgN7m9wzg',
+    primary: false
+  }
+];
+let activeServerIdx = 0;
+let degradedMode    = false; // true when running on backup server
 
-// Blink now uses one Supabase project so authenticated sessions and RLS have
-// a single authority. Never fail protected requests over to another project.
-function SUPABASE_URL() { return SUPABASE_PROJECT_URL; }
-function SUPABASE_KEY() { return SUPABASE_ANON_KEY; }
+// Convenience getters — always read from active server
+function SUPABASE_URL() { return SERVERS[activeServerIdx].url; }
+function SUPABASE_KEY() { return SERVERS[activeServerIdx].key; }
 
-// Edge Functions also use the single remaining Supabase project.
-function PRIMARY_URL() { return SUPABASE_PROJECT_URL; }
-function PRIMARY_KEY() { return SUPABASE_ANON_KEY; }
+// Primary server is always used for Edge Functions (AI) — they only exist there
+function PRIMARY_URL() { return SERVERS[0].url; }
+function PRIMARY_KEY() { return SERVERS[0].key; }
 
 // Direct fetch to primary server — for Edge Functions only, no failover
-// Strips 'apikey' header — Edge Functions reject it with CORS error
+// Always authenticate with the primary project's key; the active server may be the backup.
 async function primaryFetch(path, options = {}) {
-  const { apikey: _ignored, ...callerHeaders } = options.headers || {};
+  const callerHeaders = Object.fromEntries(
+    Object.entries(options.headers || {}).filter(([name]) =>
+      !['apikey', 'authorization'].includes(name.toLowerCase())
+    )
+  );
   const headers = {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${PRIMARY_KEY()}`,
-    ...callerHeaders
+    ...callerHeaders,
+    'Authorization': `Bearer ${PRIMARY_KEY()}`
   };
   return fetch(PRIMARY_URL() + path, { ...options, headers });
 }
 
-// Core fetch wrapper — authenticated requests stay on the primary project.
+// Core fetch wrapper — auto-failover on 503 / 429 / network error
 async function sbFetch(path, options = {}) {
-  const headers = {
-    'apikey': SUPABASE_KEY(),
-    'Authorization': `Bearer ${SUPABASE_KEY()}`,
-    ...(options.headers || {})
-  };
-  return fetch(SUPABASE_URL() + path, { ...options, headers });
+  const tried = new Set();
+  for (let attempt = 0; attempt < SERVERS.length; attempt++) {
+    const idx = (activeServerIdx + attempt) % SERVERS.length;
+    if (tried.has(idx)) break;
+    tried.add(idx);
+    const srv = SERVERS[idx];
+    const headers = {
+      'apikey': srv.key,
+      'Authorization': `Bearer ${srv.key}`,
+      ...(options.headers || {})
+    };
+    try {
+      const res = await fetch(srv.url + path, { ...options, headers });
+      if (res.status === 503 || res.status === 429 || res.status === 502) {
+        // This server is busy — try the next one
+        continue;
+      }
+      // Success — lock onto this server if it changed
+      if (idx !== activeServerIdx) {
+        activeServerIdx = idx;
+        setDegradedMode(!SERVERS[idx].primary);
+      }
+      return res;
+    } catch(e) {
+      // Network error — try next
+      continue;
+    }
+  }
+  // All servers failed — stay on current, throw so callers can handle
+  throw new Error('All Blink servers are busy. Try again in a moment.');
+}
+
+function setDegradedMode(on) {
+  if (degradedMode === on) return;
+  degradedMode = on;
+  const banner = document.getElementById('degraded-banner');
+  if (banner) banner.style.display = on ? 'flex' : 'none';
+  if (on) toast('⚠️ Backup server active — images & stickers paused');
+  else toast('✅ Back on main server');
 }
 
 const TABLE             = 'messages';
@@ -157,12 +205,8 @@ function saveStreaks()        { ls('streaks',        JSON.stringify(streaks)); }
 const STORY_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const MAX_STORY_BYTES = 120 * 1024;
 
-function normalizeUsername(name) {
-  return String(name ?? '').trim().toLowerCase();
-}
-
 function validateUsername(name) {
-  return /^[a-z0-9_]{1,24}$/.test(normalizeUsername(name));
+  return /^[a-zA-Z0-9_]{1,24}$/.test(name);
 }
 
 // ─── IMAGE EXPIRY ─────────────────────────────────────────────────────────────
@@ -217,22 +261,16 @@ async function compressImage(file, maxBytes = MAX_IMAGE_BYTES, maxDim = 1200, st
 
 // ─── USERNAME REGISTRY ────────────────────────────────────────────────────────
 async function isUsernameTaken(username) {
-  const matches = await findRegisteredUsernames(username);
-  return matches.length > 0;
-}
-
-async function findRegisteredUsernames(username) {
-  const pattern = String(username ?? '').trim().replace(/[\\%_]/g, '\\$&');
   try {
-    const res = await sbFetch(`/rest/v1/usernames?username=ilike.${encodeURIComponent(pattern)}&select=username&limit=3`,
+    const res = await sbFetch(`/rest/v1/usernames?username=eq.${encodeURIComponent(username)}&select=username`,
       { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
     );
-    if (!res.ok) return [];
-    return await res.json();
-  } catch(e) { return []; }
+    if (!res.ok) return false;
+    const rows = await res.json();
+    return rows.length > 0;
+  } catch(e) { return false; }
 }
 async function registerUsername(username) {
-  username = normalizeUsername(username);
   try {
     await sbFetch(`/rest/v1/usernames`, {
       method: 'POST',
@@ -294,7 +332,6 @@ async function checkinDevice() {
       if (rows[0]?.force_signed_out) {
         // Admin forced this specific device out — wipe local data and
         // return to the welcome screen, same as a normal "remove device."
-        await BlinkAuth.signOut('local');
         localStorage.clear();
         window.location.reload();
         return;
@@ -510,7 +547,19 @@ function showBroadcastBanner(message) {
 }
 
 async function isUsernameBlacklisted(username) {
-  return BlinkAuth.usernameBlocked(username);
+  try {
+    const res = await sbFetch(`/rest/v1/username_blacklist?username=eq.${encodeURIComponent(username)}&select=username,expires_at`,
+      { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
+    );
+    if (!res.ok) return false;
+    const rows = await res.json();
+    if (!rows.length) return false;
+    const entry = rows[0];
+    // No expiry = permanent ban. If an expiry exists and has already
+    // passed, treat it as no longer blocked.
+    if (entry.expires_at && new Date(entry.expires_at) < new Date()) return false;
+    return true;
+  } catch(e) { return false; }
 }
 
 function showBlockedScreen() {
@@ -527,6 +576,7 @@ function showBlockedScreen() {
 // admin dashboard instead of silently failing in someone's browser with no
 // way for you to ever find out.
 async function logClientError(message, stack, context) {
+  if (degradedMode) return; // don't waste backup server capacity on error logs
   try {
     await sbFetch(`/rest/v1/client_errors`, {
       method: 'POST',
@@ -544,7 +594,6 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 async function checkScheduledBroadcasts() {
-  if (!myUsername) return;
   try {
     const res = await sbFetch(`/rest/v1/scheduled_broadcasts?shown=eq.false&show_at=lte.${new Date().toISOString()}&select=*`,
       { headers: { 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` } }
@@ -552,16 +601,15 @@ async function checkScheduledBroadcasts() {
     if (!res.ok) return;
     const rows = await res.json();
     if (!rows.length) return;
-    let seen = [];
-    const seenKey = `blinkSeenBroadcastIds:${myUsername}`;
-    try { seen = JSON.parse(ls(seenKey) || '[]'); } catch (_) {}
-    if (!Array.isArray(seen)) seen = [];
-    const seenSet = new Set(seen.map(String));
-    const unseen = rows.filter(row => !seenSet.has(String(row.id)));
-    if (!unseen.length) return;
-    showBroadcastBanner(unseen[unseen.length - 1].message);
-    seen = [...seenSet, ...unseen.map(row => String(row.id))].slice(-100);
-    ls(seenKey, JSON.stringify(seen));
+    // Show the most recent due broadcast, mark all due ones as shown so they
+    // don't repeat for this or other users once their time has passed.
+    showBroadcastBanner(rows[rows.length - 1].message);
+    const ids = rows.map(r => r.id);
+    sbFetch(`/rest/v1/scheduled_broadcasts?id=in.(${ids.join(',')})`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}`, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ shown: true })
+    }).catch(() => {});
   } catch(e) {}
 }
 
@@ -588,24 +636,12 @@ async function init() {
       return;
     }
   }
-  // localStorage is only a display/cache hint. The signed-in Auth user and its
-  // server-side account row are the only source of account identity.
-  const savedUsername = (ls('myUsername') || '').trim();
-  myUsername = '';
+  checkScheduledBroadcasts();
+
+  myUsername = ls('myUsername') || '';
   myDeviceId = getOrCreateDeviceId();
   const oldCode = ls('myCode');
-  if (oldCode) ls('myCode', '');
-  const session = await BlinkAuth.currentSession();
-  if (session) {
-    const account = await BlinkAuth.account();
-    if (account?.username) {
-      myUsername = account.username;
-      ls('myUsername', myUsername);
-    } else {
-      await BlinkAuth.signOut('local');
-      localStorage.removeItem('myUsername');
-    }
-  }
+  if (oldCode && !myUsername) ls('myCode', '');
 
   // If this device already has an account, make sure it hasn't since been
   // blocked — checked every time the app loads, not just at signup.
@@ -620,10 +656,9 @@ async function init() {
 
   if (!myUsername) {
     document.getElementById('welcome-screen').style.display = 'flex';
-    if (savedUsername) document.getElementById('welcome-input').value = savedUsername;
+    startLinkingPoll(handleLinkingPollMessage);
     return;
   }
-  checkScheduledBroadcasts();
   startApp();
 }
 
@@ -640,7 +675,7 @@ function handleLinkingPollMessage(r) {
 
 async function completeLinking(username) {
   stopLinkingPoll();
-  myUsername = String(username ?? '').trim();
+  myUsername = username;
   ls('myUsername', myUsername);
   document.getElementById('link-modal').classList.remove('open');
   document.getElementById('welcome-screen').style.display = 'none';
@@ -653,7 +688,6 @@ async function startApp() {
   contacts       = JSON.parse(ls('contacts')       || '[]');
   chats          = JSON.parse(ls('chats')          || '{}');
   groups         = JSON.parse(ls('groups')         || '[]');
-  await syncOwnedGroupMemberships();
   favStickers    = JSON.parse(ls('favStickers')    || '[]');
   customStickers = JSON.parse(ls('customStickers') || '[]');
   avatars        = JSON.parse(ls('avatars')        || '{}');
@@ -681,7 +715,6 @@ async function startApp() {
   }
   streaks        = JSON.parse(ls('streaks')        || '{}');
   notificationsOn = ls('notificationsOn') !== 'false';
-  await ensurePayWallet(myUsername);
   updateMyAvatarUI();
   cleanExpiredImages();
   cleanExpiredStories();
@@ -715,7 +748,6 @@ async function startApp() {
 
 // ─── SET USERNAME ─────────────────────────────────────────────────────────────
 async function setUsername(newUsername, isFirstTime = false) {
-  newUsername = normalizeUsername(newUsername);
   const oldUsername = myUsername;
   myUsername = newUsername;
   ls('myUsername', myUsername);
@@ -1262,7 +1294,7 @@ function updateAnalyticsToggleUI() {
 
 // Core fire-and-forget event logger — drops silently if consent not given
 async function trackEvent(event, meta = {}) {
-  if (!analyticsEnabled || !myUsername) return;
+  if (!analyticsEnabled || !myUsername || degradedMode) return;
   try {
     sbFetch(`/rest/v1/analytics_events`, {
       method: 'POST',
@@ -3824,31 +3856,12 @@ async function sendGroupMessage(text, type = 'text', extraData = {}) {
 async function createGroup(name, memberCodes) {
   const groupId = 'grp_' + myUsername + '_' + Date.now();
   const members = [{ code: myUsername, name: myUsername }, ...memberCodes.map(code => ({ code, name: contacts.find(c=>c.code===code)?.name||code }))];
-  const membership = await sbFetch('/rest/v1/rpc/blink_create_group_members', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ p_group_id: groupId, p_usernames: members.map(m => m.code) })
-  });
-  if (!membership.ok) { toast('Could not create secure group membership'); return; }
   const group = { id: groupId, name, members, createdBy: myUsername };
   groups.push(group); saveGroups();
   const invitePayload = JSON.stringify({ groupId, groupName: name, invitedByName: myUsername, members });
   await Promise.all(memberCodes.map(code => pushToSupabase(code, invitePayload, 'group_invite')));
   openGroup(groupId);
   toast(`Group "${name}" created`);
-}
-
-async function syncOwnedGroupMemberships() {
-  const ownedGroups = groups.filter(g => String(g.id || '').startsWith(`grp_${myUsername}_`));
-  for (const group of ownedGroups) {
-    const names = (group.members || []).map(m => typeof m === 'string' ? m : m.code).filter(Boolean);
-    try {
-      const res = await sbFetch('/rest/v1/rpc/blink_create_group_members', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ p_group_id: group.id, p_usernames: names })
-      });
-      if (!res.ok) console.warn('Could not synchronize group membership:', group.id, await res.text().catch(() => ''));
-    } catch (error) { console.warn('Group membership sync failed:', error); }
-  }
 }
 
 function joinGroup(invite) {
@@ -3862,11 +3875,55 @@ function joinGroup(invite) {
 }
 
 // ─── ADMIN STATS TRACKING ───────────────────────────────────────────────────────
-// Counters are maintained by the database after authenticated message inserts;
-// never accept client-supplied usernames or totals for admin statistics.
+// Lightweight, fire-and-forget counters for the admin dashboard. These are
+// just numbers — no message content is ever stored — so they persist safely
+// even though the actual messages themselves expire within 24-48h.
 const STATS_CONTENT_TYPES = ['text', 'image', 'voice', 'sticker', 'file', 'snap'];
+
+async function incrementDailyStat(statName, amount = 1) {
+  if (degradedMode) return;
+  try {
+    await sbFetch(`/rest/v1/rpc/increment_daily_stat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` },
+      body: JSON.stringify({ stat_name: statName, by_amount: amount })
+    });
+  } catch(e) { /* stats are best-effort, never block on failure */ }
+}
+
+// Call this once per genuine user-initiated send (not once per recipient
+// address) — so sending one message to a group of 5 still counts as 1.
 function trackMessageSent(type) {
-  return STATS_CONTENT_TYPES.includes(type); // database trigger performs counting
+  if (!STATS_CONTENT_TYPES.includes(type)) return;
+  incrementDailyStat('messages_sent', 1);
+  trackActiveUserToday();
+  incrementUserTotal();
+}
+
+// All-time per-user message count, used for the admin leaderboard. Separate
+// from daily_stats since this needs to persist indefinitely, not reset daily.
+async function incrementUserTotal() {
+  if (degradedMode) return;
+  try {
+    await sbFetch(`/rest/v1/rpc/increment_user_total`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY(), 'Authorization': `Bearer ${SUPABASE_KEY()}` },
+      body: JSON.stringify({ p_username: myUsername })
+    });
+  } catch(e) {}
+}
+
+// Increments "active users" at most once per username per calendar day,
+// using a small localStorage marker to avoid over-counting repeat sends.
+function trackActiveUserToday() {
+  const today = todayStr();
+  if (ls('lastActiveStatDate') === today) return;
+  ls('lastActiveStatDate', today);
+  incrementDailyStat('active_users', 1);
+}
+
+function trackNewSignup() {
+  incrementDailyStat('new_signups', 1);
 }
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
@@ -4235,7 +4292,7 @@ async function pollMessages() {
       if (r.type === 'device_removed') {
         if (r.targetDeviceId && r.targetDeviceId !== myDeviceId) return;
         toast('This device was removed from your account');
-        setTimeout(async () => { await BlinkAuth.signOut('local'); localStorage.clear(); window.location.reload(); }, 1500);
+        setTimeout(() => { localStorage.clear(); window.location.reload(); }, 1500);
         return;
       }
 
@@ -4458,6 +4515,7 @@ function showStickerMenu(bubbleEl, bwrap, url) {
 }
 
 function sendStickerMsg(s) {
+  if (degradedMode) { toast('⚠️ Stickers paused — backup server active'); closeAllPanels(); return; }
   analyticsOnFeature('sticker');
   if (!activeCode) return;
   const msgId = generateMsgId();
@@ -4586,68 +4644,61 @@ function showRenameModal(contact) {
 
 // ─── EVENT LISTENERS ──────────────────────────────────────────────────────────
 
-// Password authentication and first-password claim for legacy usernames.
-let welcomeMode = 'signup';
-function setWelcomeMode(mode) {
-  welcomeMode = mode;
-  const signingIn = mode === 'signin';
-  document.getElementById('welcome-btn').textContent = signingIn ? 'Sign in' : 'Create account / set password';
-  document.getElementById('welcome-connect-link').textContent = signingIn ? 'Need to set up a password? Create / claim account' : 'Already have a password? Sign in';
-  document.getElementById('welcome-password').autocomplete = signingIn ? 'current-password' : 'new-password';
-  document.getElementById('welcome-description').textContent = signingIn
-    ? 'Sign in with your Blink username and password. No email or phone is used.'
-    : 'New and existing Blink users: create a password to protect this username. No email or phone is used.';
-  document.getElementById('welcome-hint').textContent = 'Password must be at least 4 characters.';
-}
+// Welcome
 document.getElementById('welcome-btn').addEventListener('click', async () => {
-  const username = normalizeUsername(document.getElementById('welcome-input').value);
-  const password = document.getElementById('welcome-password').value;
-  const btn = document.getElementById('welcome-btn');
-  const hint = document.getElementById('welcome-hint');
-  hint.style.color = '#8e8e93';
-  try {
-    BlinkAuth.validCredentials(username, password);
-    if (welcomeMode === 'signup' && window._signupsDisabled) throw new Error('New account setup is temporarily disabled.');
-    btn.disabled = true;
-    btn.textContent = welcomeMode === 'signin' ? 'Signing in…' : 'Setting password…';
-    if (await isUsernameBlacklisted(username)) throw new Error('This username is unavailable.');
-    if (welcomeMode === 'signin') await BlinkAuth.signIn(username, password);
-    else {
-      await BlinkAuth.signUp(username, password);
-      // First password is now established; invalidate any parallel sessions
-      // before retaining only the device that completed the claim.
-      await BlinkAuth.signOut('global');
-      await BlinkAuth.signIn(username, password);
-    }
-    const account = await BlinkAuth.account();
-    if (!account?.username) {
-      await BlinkAuth.signOut('local');
-      throw new Error('Account setup did not finish. Please retry or contact the Blink administrator.');
-    }
-    myUsername = account.username;
-    ls('myUsername', myUsername);
-    document.getElementById('welcome-password').value = '';
-    document.getElementById('welcome-screen').style.display = 'none';
-    await registerDevice();
-    await checkScheduledBroadcasts();
-    await startApp();
-  } catch (e) {
-    hint.style.color = '#ff453a';
-    hint.textContent = e.message || 'Could not authenticate. Check your username and password.';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = welcomeMode === 'signin' ? 'Sign in' : 'Create account / set password';
+  if (window._signupsDisabled) {
+    document.getElementById('welcome-hint').style.color = '#ff453a';
+    document.getElementById('welcome-hint').textContent = 'New signups are temporarily disabled.';
+    return;
   }
+  const val = document.getElementById('welcome-input').value.trim();
+  if (!validateUsername(val)) {
+    document.getElementById('welcome-hint').style.color = '#ff453a';
+    document.getElementById('welcome-hint').textContent = 'Letters, numbers and _ only. No spaces.';
+    return;
+  }
+  const btn = document.getElementById('welcome-btn');
+  btn.textContent = 'Checking...';
+  btn.disabled = true;
+  const taken = await isUsernameTaken(val);
+  if (taken) {
+    btn.textContent = 'Get Started';
+    btn.disabled = false;
+    document.getElementById('welcome-hint').style.color = '#ff453a';
+    document.getElementById('welcome-hint').textContent = '@' + val + ' is already taken — try another.';
+    return;
+  }
+  if (await isUsernameBlacklisted(val)) {
+    btn.textContent = 'Get Started';
+    btn.disabled = false;
+    document.getElementById('welcome-hint').style.color = '#ff453a';
+    // Same wording as "already taken" — doesn't reveal this username is
+    // specifically blocked, just nudges toward picking something else.
+    document.getElementById('welcome-hint').textContent = '@' + val + ' is unavailable — try another.';
+    return;
+  }
+  await setUsername(val, true);
+  await registerUsername(val);
+  trackNewSignup();
+  document.getElementById('welcome-screen').style.display = 'none';
+  stopLinkingPoll();
+  await registerDevice();
+  startApp();
 });
 document.getElementById('welcome-input').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('welcome-btn').click(); });
-document.getElementById('welcome-password').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('welcome-btn').click(); });
 document.getElementById('welcome-input').addEventListener('input', () => {
   document.getElementById('welcome-hint').style.color = '#8e8e93';
   document.getElementById('welcome-hint').textContent = 'No spaces. Letters, numbers and _ only.';
 });
 
-// The old device-link code was based on editable localStorage and is disabled.
-document.getElementById('welcome-connect-link').addEventListener('click', () => setWelcomeMode(welcomeMode === 'signup' ? 'signin' : 'signup'));
+// ─── DEVICE LINKING UI ──────────────────────────────────────────────────────────
+document.getElementById('welcome-connect-link').addEventListener('click', () => {
+  document.getElementById('link-step-username').style.display = 'block';
+  document.getElementById('link-step-code').style.display = 'none';
+  document.getElementById('link-username-input').value = '';
+  document.getElementById('link-modal').classList.add('open');
+  document.getElementById('link-username-input').focus();
+});
 
 let pendingLinkTarget = '';
 
@@ -4656,12 +4707,8 @@ document.getElementById('link-cancel-2').addEventListener('click', () => documen
 document.getElementById('link-modal').addEventListener('click', e => { if (e.target === document.getElementById('link-modal')) document.getElementById('link-modal').classList.remove('open'); });
 
 document.getElementById('link-send-request').addEventListener('click', async () => {
-  const entered = normalizeUsername(document.getElementById('link-username-input').value);
-  if (!validateUsername(entered)) { toast('Enter a valid username'); return; }
-  const matches = await findRegisteredUsernames(entered);
-  if (!matches.length) { toast('Username not found'); return; }
-  if (matches.length > 1) { toast('More than one account matches that username'); return; }
-  const target = matches[0].username;
+  const target = document.getElementById('link-username-input').value.trim();
+  if (!validateUsername(target)) { toast('Enter a valid username'); return; }
   const btn = document.getElementById('link-send-request');
   btn.disabled = true; btn.textContent = 'Sending...';
   await sendLinkRequest(target, myDeviceId);
@@ -5141,41 +5188,8 @@ showTimetableBannerIfNeeded();
 
 document.getElementById('settings-sync-btn').addEventListener('click', async () => {
   document.getElementById('settings-overlay').classList.remove('open');
-  toast('On your other device, open Blink and sign in with your username and password.');
-});
-
-document.getElementById('settings-change-password').addEventListener('click', async () => {
-  document.getElementById('password-change-error').textContent = '';
-  document.getElementById('password-change-new').value = '';
-  document.getElementById('password-change-confirm').value = '';
-  document.getElementById('password-change-modal').classList.add('open');
-});
-document.getElementById('password-change-cancel').addEventListener('click', () => document.getElementById('password-change-modal').classList.remove('open'));
-document.getElementById('password-change-modal').addEventListener('click', e => {
-  if (e.target.id === 'password-change-modal') document.getElementById('password-change-modal').classList.remove('open');
-});
-document.getElementById('password-change-save').addEventListener('click', async () => {
-  const next = document.getElementById('password-change-new').value;
-  const confirmNext = document.getElementById('password-change-confirm').value;
-  const error = document.getElementById('password-change-error');
-  error.textContent = '';
-  if (Array.from(next).length < 4) { error.textContent = 'Password must be at least 4 characters.'; return; }
-  if (next !== confirmNext) { error.textContent = 'Passwords do not match.'; return; }
-  const button = document.getElementById('password-change-save');
-  button.disabled = true;
-  try {
-    await BlinkAuth.changePasswordAndSignOut(myUsername, next);
-    document.getElementById('password-change-modal').classList.remove('open');
-    toast('Password changed. Other devices have been signed out.');
-  } catch (e) { error.textContent = e.message || 'Could not change password.'; }
-  finally { button.disabled = false; }
-});
-
-document.getElementById('settings-sign-out').addEventListener('click', async () => {
-  await unregisterThisDevice();
-  await BlinkAuth.signOut('local');
-  localStorage.clear();
-  window.location.reload();
+  toast('Checking for other devices...');
+  await requestSync(true);
 });
 
 // Feedback / bug report
@@ -5187,6 +5201,25 @@ document.getElementById('consent-decline').addEventListener('click', () => setAn
 document.getElementById('analytics-toggle').addEventListener('change', e => {
   setAnalyticsConsent(e.target.checked);
   toast(e.target.checked ? 'Usage analytics enabled' : 'Usage analytics disabled');
+});
+
+// Degraded mode retry — try to switch back to primary server
+document.getElementById('degraded-retry').addEventListener('click', async () => {
+  toast('Checking main server…');
+  try {
+    const res = await fetch(SERVERS[0].url + '/rest/v1/usernames?select=username&limit=1', {
+      headers: { 'apikey': SERVERS[0].key, 'Authorization': `Bearer ${SERVERS[0].key}` },
+      signal: AbortSignal.timeout(4000)
+    });
+    if (res.ok || res.status < 500) {
+      activeServerIdx = 0;
+      setDegradedMode(false);
+    } else {
+      toast('Main server still busy — staying on backup');
+    }
+  } catch(e) {
+    toast('Main server still unreachable');
+  }
 });
 
 document.getElementById('settings-feedback-btn').addEventListener('click', () => {
@@ -5483,17 +5516,27 @@ document.getElementById('settings-remove-story').addEventListener('click', () =>
   }
 });
 
-// Clear local data and sign out this device. Account deletion is not offered
-// because it must be implemented as a server-side, owner-verified operation.
+// Remove account
 document.getElementById('settings-remove-account').addEventListener('click', async () => {
   document.getElementById('settings-overlay').classList.remove('open');
+
+  const others = await getMyOtherDevices();
+  const isLastDevice = others.length === 0;
+
   const title = document.getElementById('remove-account-title');
   const body  = document.getElementById('remove-account-body');
   const confirmBtn = document.getElementById('remove-account-confirm');
-  title.textContent = 'Sign out and clear this device?';
-  body.textContent = 'This removes local Blink data and signs out this device. Your Blink account and data on other devices will remain.';
-  confirmBtn.textContent = 'Sign out and clear';
-  document.getElementById('remove-account-modal').dataset.isLastDevice = '0';
+
+  if (isLastDevice) {
+    title.textContent = '⚠️ Remove Account';
+    body.textContent = 'This will permanently delete your username and erase all your messages, contacts, and data from this device. This cannot be undone.';
+    confirmBtn.textContent = 'Delete Everything';
+  } else {
+    title.textContent = '⚠️ Remove This Device';
+    body.textContent = `This will remove this device from your account and erase its local data. @${myUsername} will remain active on your other ${others.length > 1 ? 'devices' : 'device'}.`;
+    confirmBtn.textContent = 'Remove This Device';
+  }
+  document.getElementById('remove-account-modal').dataset.isLastDevice = isLastDevice ? '1' : '0';
 
   const countdown  = document.getElementById('remove-account-countdown');
   countdown.textContent = '3';
@@ -5525,8 +5568,14 @@ document.getElementById('remove-account-modal').addEventListener('click', e => {
   }
 });
 document.getElementById('remove-account-confirm').addEventListener('click', async () => {
+  const isLastDevice = document.getElementById('remove-account-modal').dataset.isLastDevice === '1';
+  if (isLastDevice) {
+    // Only device on this account — full teardown, same as before.
+    await releaseUsername(myUsername);
+  }
+  // Either way, this device's own registration should be removed so other
+  // devices stop trying to fork messages to an address that no longer exists.
   await unregisterThisDevice();
-  await BlinkAuth.signOut('local');
   localStorage.clear();
   window.location.reload();
 });
@@ -5554,32 +5603,6 @@ async function fetchPayBalance() {
     const label = document.getElementById('pay-balance-label');
     if (label) label.textContent = rows.length ? `BP ${formatBP(rows[0].amount)}` : 'BP —';
   } catch(e) {}
-}
-
-// Initialize the wallet as part of account startup, not only when Blink Pay
-// is opened. Ignore duplicates so a retry can never reset an existing balance.
-async function ensurePayWallet(username) {
-  if (!username) return false;
-  try {
-    const res = await sbFetch('/rest/v1/balances', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_KEY(),
-        'Authorization': `Bearer ${SUPABASE_KEY()}`,
-        'Prefer': 'resolution=ignore-duplicates,return=minimal'
-      },
-      body: JSON.stringify({ username, amount: 500 })
-    });
-    if (!res.ok) {
-      console.error('ensurePayWallet failed:', res.status, await res.text().catch(() => ''));
-      return false;
-    }
-    return true;
-  } catch (e) {
-    console.error('ensurePayWallet exception:', e);
-    return false;
-  }
 }
 
 document.getElementById('settings-btn').addEventListener('click', async () => {
@@ -5666,28 +5689,25 @@ document.getElementById('settings-change-username').addEventListener('click', ()
 document.getElementById('username-cancel').addEventListener('click', () => document.getElementById('username-modal').classList.remove('open'));
 document.getElementById('username-modal').addEventListener('click', e => { if(e.target===document.getElementById('username-modal')) document.getElementById('username-modal').classList.remove('open'); });
 document.getElementById('username-confirm').addEventListener('click', async () => {
-  const val = normalizeUsername(document.getElementById('username-input').value);
+  const val = document.getElementById('username-input').value.trim();
   if (!validateUsername(val)) { toast('Invalid — letters, numbers and _ only'); return; }
   if (val===myUsername) { document.getElementById('username-modal').classList.remove('open'); return; }
 
   const btn = document.getElementById('username-confirm');
-  btn.textContent = 'Saving...';
+  btn.textContent = 'Checking...';
   btn.disabled = true;
-  try {
-    const res = await sbFetch('/rest/v1/rpc/blink_change_username', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ p_new_username: val })
-    });
-    const result = res.ok ? await res.json() : await res.text();
-    if (!res.ok || result !== 'Success') {
-      toast(result === 'Taken' ? '@' + val + ' is already taken' : result === 'Unavailable' ? '@' + val + ' is unavailable' : String(result || 'Could not update username'));
-      return;
-    }
-    document.getElementById('username-modal').classList.remove('open');
-    await setUsername(val, false);
-    toast('Username updated — reshare your new @' + val);
-  } catch (error) { toast(error.message || 'Could not update username'); }
-  finally { btn.textContent = 'Save'; btn.disabled = false; }
+  const taken = await isUsernameTaken(val);
+  btn.textContent = 'Save';
+  btn.disabled = false;
+
+  if (taken) { toast('@' + val + ' is already taken'); return; }
+
+  const oldUsername = myUsername;
+  document.getElementById('username-modal').classList.remove('open');
+  await releaseUsername(oldUsername);
+  await registerUsername(val);
+  await setUsername(val, false);
+  toast('Username updated — reshare your new @' + val);
 });
 document.getElementById('username-input').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('username-confirm').click(); });
 
@@ -5763,25 +5783,18 @@ document.getElementById('modal').addEventListener('click', e=>{if(e.target===doc
 
 // Step 1 → Step 2
 document.getElementById('modal-next').addEventListener('click', () => {
-  (async () => {
-    const entered = normalizeUsername(document.getElementById('contact-code-input').value);
-    if(!entered){toast('Enter a username');return;}
-    if(!validateUsername(entered)){toast('Enter a valid username');return;}
-    const matches = await findRegisteredUsernames(entered);
-    if(matches.length > 1){toast('More than one account matches that username');return;}
-    const code = matches.length ? matches[0].username : entered;
-    if(myUsername && code.toLowerCase()===myUsername.toLowerCase()){toast("That's your own username");return;}
-    if(Array.isArray(contacts) && contacts.find(c=>String(c?.code || '').toLowerCase()===code.toLowerCase())){toast('Contact already added');return;}
-    // Use the registry spelling if this is a legacy mixed-case account.
-    document.getElementById('contact-code-input').value = code;
-    if(!document.getElementById('contact-name-input').value.trim()) {
-      document.getElementById('contact-name-input').value = code;
-    }
-    document.getElementById('contact-step-1').style.display='none';
-    document.getElementById('contact-step-2').style.display='';
-    const ni = document.getElementById('contact-name-input');
-    ni.focus(); ni.select();
-  })();
+  const code = document.getElementById('contact-code-input').value.trim().toLowerCase();
+  if(!code){toast('Enter a username');return;}
+  if(myUsername && code===myUsername){toast("That's your own username");return;}
+  if(Array.isArray(contacts) && contacts.find(c=>c.code===code)){toast('Contact already added');return;}
+  // Pre-fill name with their username so user can just hit Add if they want
+  if(!document.getElementById('contact-name-input').value.trim()) {
+    document.getElementById('contact-name-input').value = code;
+  }
+  document.getElementById('contact-step-1').style.display='none';
+  document.getElementById('contact-step-2').style.display='';
+  const ni = document.getElementById('contact-name-input');
+  ni.focus(); ni.select();
 });
 document.getElementById('contact-code-input').addEventListener('keydown', e=>{if(e.key==='Enter')document.getElementById('modal-next').click();});
 document.getElementById('contact-name-input').addEventListener('keydown', e=>{if(e.key==='Enter')document.getElementById('modal-add').click();});
@@ -5795,10 +5808,10 @@ document.getElementById('modal-back').addEventListener('click', () => {
 
 document.getElementById('modal-add').addEventListener('click', () => {
   const name=document.getElementById('contact-name-input').value.trim();
-  const code=document.getElementById('contact-code-input').value.trim();
+  const code=document.getElementById('contact-code-input').value.trim().toLowerCase();
   if(!name||!code){toast('Fill in both fields');return;}
-  if(code.toLowerCase()===myUsername.toLowerCase()){toast("That's your own username");return;}
-  if(contacts.find(c=>String(c?.code || '').toLowerCase()===code.toLowerCase())){toast('Contact already exists');return;}
+  if(code===myUsername){toast("That's your own username");return;}
+  if(contacts.find(c=>c.code===code)){toast('Contact already exists');return;}
   contacts.push({name,code,lastModified:Date.now()}); saveContacts(); renderContacts();
   closeContactModal();
   toast(`${name} added`); openChat(code);
@@ -5902,6 +5915,7 @@ document.getElementById('ai-mode-cancel').addEventListener('click', () => {
 document.getElementById('image-file-input').addEventListener('change', async e=>{
   const file=e.target.files[0];e.target.value='';
   if(!file||!activeCode)return;
+  if(degradedMode){ toast('⚠️ Images paused — backup server active'); return; }
   toast('Compressing...');
   try{
     const base64=await compressImage(file);
